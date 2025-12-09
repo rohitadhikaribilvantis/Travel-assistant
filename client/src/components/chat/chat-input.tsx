@@ -1,0 +1,110 @@
+import { useState, useRef, useEffect } from "react";
+import { Send, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+
+interface ChatInputProps {
+  onSendMessage: (message: string) => void;
+  isLoading?: boolean;
+  disabled?: boolean;
+}
+
+const SUGGESTED_PROMPTS = [
+  "Find flights from NYC to London next week",
+  "I need a one-way ticket to Tokyo",
+  "Search for cheap flights to Paris in December",
+  "Find direct flights from LAX to Miami",
+];
+
+export function ChatInput({ onSendMessage, isLoading, disabled }: ChatInputProps) {
+  const [message, setMessage] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`;
+    }
+  }, [message]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (message.trim() && !isLoading && !disabled) {
+      onSendMessage(message.trim());
+      setMessage("");
+      if (textareaRef.current) {
+        textareaRef.current.style.height = "auto";
+      }
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e);
+    }
+  };
+
+  const handleSuggestionClick = (prompt: string) => {
+    if (!isLoading && !disabled) {
+      onSendMessage(prompt);
+    }
+  };
+
+  return (
+    <div className="sticky bottom-0 z-50 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      {message.length === 0 && (
+        <div className="flex flex-wrap gap-2 px-4 pt-4">
+          {SUGGESTED_PROMPTS.map((prompt, index) => (
+            <Button
+              key={index}
+              variant="outline"
+              size="sm"
+              onClick={() => handleSuggestionClick(prompt)}
+              disabled={isLoading || disabled}
+              className="text-xs"
+              data-testid={`button-suggestion-${index}`}
+            >
+              {prompt}
+            </Button>
+          ))}
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="flex items-end gap-2 p-4">
+        <div className="relative flex-1">
+          <Textarea
+            ref={textareaRef}
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask me about flights, destinations, or travel plans..."
+            disabled={isLoading || disabled}
+            className="min-h-[44px] max-h-[120px] resize-none pr-12"
+            rows={1}
+            data-testid="input-chat-message"
+          />
+          {message.length > 200 && (
+            <span className="absolute bottom-2 right-12 text-xs text-muted-foreground">
+              {message.length}/500
+            </span>
+          )}
+        </div>
+
+        <Button
+          type="submit"
+          size="icon"
+          disabled={!message.trim() || isLoading || disabled}
+          data-testid="button-send-message"
+        >
+          {isLoading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Send className="h-4 w-4" />
+          )}
+          <span className="sr-only">Send message</span>
+        </Button>
+      </form>
+    </div>
+  );
+}
