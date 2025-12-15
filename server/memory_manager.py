@@ -13,7 +13,28 @@ class TravelMemoryManager:
         if not self._initialized:
             try:
                 from mem0 import Memory
-                self._memory = Memory()
+                
+                mem0_api_key = os.environ.get("MEM0_API_KEY")
+                openai_api_key = os.environ.get("OPENAI_API_KEY")
+                
+                if not mem0_api_key:
+                    print("Warning: MEM0_API_KEY not set in environment")
+                    self._memory = None
+                    self._initialized = True
+                    return None
+                
+                self._memory = Memory(
+                    api_key=mem0_api_key,
+                    config={
+                        "llm": {
+                            "provider": "openai",
+                            "config": {
+                                "model": "gpt-4o",
+                                "api_key": openai_api_key
+                            }
+                        }
+                    }
+                )
                 self._initialized = True
             except Exception as e:
                 print(f"Warning: Could not initialize mem0: {e}")

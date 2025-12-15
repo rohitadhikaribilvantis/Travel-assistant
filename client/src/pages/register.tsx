@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle } from "lucide-react";
+import { AirportBackground } from "@/components/airport-background";
 
 export default function Register() {
   const [email, setEmail] = useState("");
@@ -41,8 +42,12 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-      <Card className="w-full max-w-md shadow-lg">
+    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
+      <div className="fixed inset-0 w-full h-full -z-10">
+        <AirportBackground />
+      </div>
+      <div className="fixed inset-0 bg-black/40 -z-10" />
+      <Card className="w-full max-w-md shadow-2xl bg-white/95 backdrop-blur-sm">
         <CardHeader className="space-y-1">
           <CardTitle className="text-2xl font-bold">Create Account</CardTitle>
           <CardDescription>Start your travel journey with us</CardDescription>

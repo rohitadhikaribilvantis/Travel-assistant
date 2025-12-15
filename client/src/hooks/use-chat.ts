@@ -64,11 +64,33 @@ export function useChat() {
     setConversationId(undefined);
   }, []);
 
+  const loadConversation = useCallback(
+    async (convId: string) => {
+      if (!token) return;
+      try {
+        const response = await fetch(`/api/conversations/${convId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setConversationId(convId);
+          setMessages(data.messages || []);
+        }
+      } catch (error) {
+        console.error("Failed to load conversation:", error);
+      }
+    },
+    [token]
+  );
+
   return {
     messages,
     isLoading: sendMessageMutation.isPending,
     sendMessage,
     clearChat,
+    loadConversation,
     error: sendMessageMutation.error,
+    conversationId,
+    setConversationId,
   };
 }

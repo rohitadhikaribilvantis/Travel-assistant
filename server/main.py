@@ -97,7 +97,9 @@ class ChatResponse(BaseModel):
 class ConversationModel(BaseModel):
     id: str
     userId: str
+    title: str
     messages: list
+    archived: bool
     createdAt: str
     updatedAt: str
 
@@ -420,6 +422,44 @@ async def get_conversation(
 async def list_conversations(current_user: dict = Depends(get_current_user)):
     conversations = storage.get_user_conversations(current_user["id"])
     return [ConversationModel(**conv) for conv in conversations]
+
+@app.put("/api/conversations/{conversation_id}/rename")
+async def rename_conversation(conversation_id: str, body: dict, current_user: dict = Depends(get_current_user)):
+    conversation = storage.get_conversation(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if conversation["userId"] != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    new_title = body.get("title", "")
+    if not new_title.strip():
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    
+    updated = storage.rename_conversation(conversation_id, new_title)
+    return ConversationModel(**updated)
+
+@app.put("/api/conversations/{conversation_id}/archive")
+async def archive_conversation(conversation_id: str, body: dict, current_user: dict = Depends(get_current_user)):
+    conversation = storage.get_conversation(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if conversation["userId"] != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    archived = body.get("archived", False)
+    updated = storage.archive_conversation(conversation_id, archived)
+    return ConversationModel(**updated)
+
+@app.delete("/api/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str, current_user: dict = Depends(get_current_user)):
+    conversation = storage.get_conversation(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if conversation["userId"] != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    storage.delete_conversation(conversation_id)
+    return {"message": "Conversation deleted"}
 
 # ==================== Run Server ====================
 if __name__ == "__main__":

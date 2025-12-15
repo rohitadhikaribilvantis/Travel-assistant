@@ -40,7 +40,9 @@ class ConversationModel(Base):
     
     id = Column(String, primary_key=True, index=True)
     userId = Column(String, index=True)
+    title = Column(String, default="New Conversation")
     messages = Column(Text, default="[]")  # JSON string
+    archived = Column(String, default="false")  # "true" or "false"
     createdAt = Column(String)
     updatedAt = Column(String)
 
@@ -208,7 +210,9 @@ class DatabaseStorage:
             return {
                 "id": conversation.id,
                 "userId": conversation.userId,
+                "title": conversation.title,
                 "messages": json.loads(conversation.messages),
+                "archived": conversation.archived == "true",
                 "createdAt": conversation.createdAt,
                 "updatedAt": conversation.updatedAt,
             }
@@ -224,7 +228,9 @@ class DatabaseStorage:
                 return {
                     "id": conv.id,
                     "userId": conv.userId,
+                    "title": conv.title,
                     "messages": json.loads(conv.messages),
+                    "archived": conv.archived == "true",
                     "createdAt": conv.createdAt,
                     "updatedAt": conv.updatedAt,
                 }
@@ -267,11 +273,77 @@ class DatabaseStorage:
                 {
                     "id": conv.id,
                     "userId": conv.userId,
+                    "title": conv.title,
                     "messages": json.loads(conv.messages),
+                    "archived": conv.archived == "true",
                     "createdAt": conv.createdAt,
                     "updatedAt": conv.updatedAt,
                 }
                 for conv in convs
             ]
+        finally:
+            db.close()
+    
+    def rename_conversation(self, conversation_id: str, new_title: str) -> dict:
+        """Rename a conversation."""
+        db = self.get_session()
+        try:
+            conv = db.query(ConversationModel).filter(ConversationModel.id == conversation_id).first()
+            if not conv:
+                return None
+            
+            conv.title = new_title
+            conv.updatedAt = datetime.now().isoformat()
+            db.commit()
+            db.refresh(conv)
+            
+            return {
+                "id": conv.id,
+                "userId": conv.userId,
+                "title": conv.title,
+                "messages": json.loads(conv.messages),
+                "archived": conv.archived == "true",
+                "createdAt": conv.createdAt,
+                "updatedAt": conv.updatedAt,
+            }
+        finally:
+            db.close()
+    
+    def archive_conversation(self, conversation_id: str, archived: bool) -> dict:
+        """Archive or unarchive a conversation."""
+        db = self.get_session()
+        try:
+            conv = db.query(ConversationModel).filter(ConversationModel.id == conversation_id).first()
+            if not conv:
+                return None
+            
+            conv.archived = "true" if archived else "false"
+            conv.updatedAt = datetime.now().isoformat()
+            db.commit()
+            db.refresh(conv)
+            
+            return {
+                "id": conv.id,
+                "userId": conv.userId,
+                "title": conv.title,
+                "messages": json.loads(conv.messages),
+                "archived": conv.archived == "true",
+                "createdAt": conv.createdAt,
+                "updatedAt": conv.updatedAt,
+            }
+        finally:
+            db.close()
+    
+    def delete_conversation(self, conversation_id: str) -> bool:
+        """Delete a conversation."""
+        db = self.get_session()
+        try:
+            conv = db.query(ConversationModel).filter(ConversationModel.id == conversation_id).first()
+            if not conv:
+                return False
+            
+            db.delete(conv)
+            db.commit()
+            return True
         finally:
             db.close()

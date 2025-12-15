@@ -13,10 +13,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 interface ChatHeaderProps {
-  onNewChat?: () => void;
+  // onNewChat removed - use sidebar button instead
 }
 
-export function ChatHeader({ onNewChat }: ChatHeaderProps) {
+export function ChatHeader({ }: ChatHeaderProps) {
   const { user, logout } = useAuth();
   const [, navigate] = useLocation();
 
@@ -44,15 +44,6 @@ export function ChatHeader({ onNewChat }: ChatHeaderProps) {
       </div>
       
       <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onNewChat}
-          data-testid="button-new-chat"
-          className="hidden sm:flex"
-        >
-          New Chat
-        </Button>
         <Button
           variant="ghost"
           size="icon"
