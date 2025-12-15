@@ -1,10 +1,12 @@
 import { randomUUID } from "crypto";
-import type { User, InsertUser, Conversation, ChatMessage } from "@shared/schema";
+import type { User, InsertUser, Conversation, ChatMessage, UpdateUser } from "@shared/schema";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  createUser(user: InsertUser, passwordHash: string): Promise<User>;
+  updateUser(id: string, updates: UpdateUser): Promise<User | undefined>;
   
   getConversation(id: string): Promise<Conversation | undefined>;
   getConversationsByUser(userId: string): Promise<Conversation[]>;
@@ -25,17 +27,46 @@ export class MemStorage implements IStorage {
     return this.users.get(id);
   }
 
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    return Array.from(this.users.values()).find(
+      (user) => user.email === email,
+    );
+  }
+
   async getUserByUsername(username: string): Promise<User | undefined> {
     return Array.from(this.users.values()).find(
       (user) => user.username === username,
     );
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
+  async createUser(insertUser: InsertUser, passwordHash: string): Promise<User> {
     const id = randomUUID();
-    const user: User = { ...insertUser, id };
+    const now = new Date().toISOString();
+    const user: User = {
+      id,
+      email: insertUser.email,
+      username: insertUser.username,
+      passwordHash,
+      fullName: insertUser.fullName,
+      avatar: undefined,
+      createdAt: now,
+      updatedAt: now,
+    };
     this.users.set(id, user);
     return user;
+  }
+
+  async updateUser(id: string, updates: UpdateUser): Promise<User | undefined> {
+    const user = this.users.get(id);
+    if (!user) return undefined;
+
+    const updated: User = {
+      ...user,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    this.users.set(id, updated);
+    return updated;
   }
 
   async getConversation(id: string): Promise<Conversation | undefined> {

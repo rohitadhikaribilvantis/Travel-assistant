@@ -105,10 +105,35 @@ export const conversationSchema = z.object({
 });
 export type Conversation = z.infer<typeof conversationSchema>;
 
-// Legacy user schema for compatibility
+// User schema with authentication
+export const userSchema = z.object({
+  id: z.string().uuid(),
+  email: z.string().email(),
+  username: z.string().min(3).max(50),
+  passwordHash: z.string(),
+  fullName: z.string().optional(),
+  avatar: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type User = z.infer<typeof userSchema>;
+
 export const insertUserSchema = z.object({
-  username: z.string(),
-  password: z.string(),
+  email: z.string().email(),
+  username: z.string().min(3).max(50),
+  password: z.string().min(6),
+  fullName: z.string().optional(),
 });
 export type InsertUser = z.infer<typeof insertUserSchema>;
-export type User = InsertUser & { id: string };
+
+export const updateUserSchema = z.object({
+  fullName: z.string().optional(),
+  avatar: z.string().optional(),
+});
+export type UpdateUser = z.infer<typeof updateUserSchema>;
+
+export const authResponseSchema = z.object({
+  user: userSchema.omit({ passwordHash: true }),
+  token: z.string(),
+});
+export type AuthResponse = z.infer<typeof authResponseSchema>;
