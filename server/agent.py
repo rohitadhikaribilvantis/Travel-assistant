@@ -160,23 +160,35 @@ def execute_tool(tool_name: str, arguments: dict, user_id: str) -> dict:
         travel_class = arguments.get("travel_class")
         non_stop = arguments.get("non_stop", False)
         
-        result = amadeus_client.search_flights(
-            origin=origin,
-            destination=destination,
-            departure_date=departure_date,
-            return_date=return_date,
-            adults=adults,
-            travel_class=travel_class,
-            non_stop=non_stop
-        )
+        print(f"[FLIGHT SEARCH] origin={origin}, destination={destination}, date={departure_date}")
         
-        if result.get("error"):
-            return {"error": result["error"], "flights": []}
-        
-        flights = result.get("data", [])
-        tagged_flights = amadeus_client.tag_flight_offers(flights)
-        
-        return {"flights": tagged_flights, "count": len(tagged_flights)}
+        try:
+            result = amadeus_client.search_flights(
+                origin=origin,
+                destination=destination,
+                departure_date=departure_date,
+                return_date=return_date,
+                adults=adults,
+                travel_class=travel_class,
+                non_stop=non_stop
+            )
+            
+            print(f"[FLIGHT SEARCH] Result: {result}")
+            
+            if result.get("error"):
+                print(f"[FLIGHT SEARCH] Error: {result['error']}")
+                return {"error": result["error"], "flights": []}
+            
+            flights = result.get("data", [])
+            tagged_flights = amadeus_client.tag_flight_offers(flights)
+            
+            print(f"[FLIGHT SEARCH] Found {len(tagged_flights)} flights")
+            return {"flights": tagged_flights, "count": len(tagged_flights)}
+        except Exception as e:
+            print(f"[FLIGHT SEARCH] Exception: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return {"error": str(e), "flights": []}
     
     elif tool_name == "remember_preference":
         preference = arguments.get("preference", "")

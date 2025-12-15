@@ -2,18 +2,32 @@ import { useState, useCallback } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { ChatMessage, ChatResponse } from "@shared/schema";
+import { useAuth } from "./use-auth";
 
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | undefined>();
+  const { token } = useAuth();
 
   const sendMessageMutation = useMutation({
     mutationFn: async (message: string): Promise<ChatResponse> => {
-      const response = await apiRequest("POST", "/api/chat", {
-        message,
-        conversationId,
-        userId: "default-user",
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: token ? `Bearer ${token}` : "",
+        },
+        body: JSON.stringify({
+          message,
+          conversationId,
+        }),
       });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(error || "Failed to send message");
+      }
+
       return response.json();
     },
     onSuccess: (data) => {

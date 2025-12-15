@@ -96,15 +96,24 @@ class AmadeusClient:
         if travel_class:
             params["travelClass"] = travel_class
         if non_stop:
-            params["nonStop"] = "true"
+            params["nonStop"] = True
         if max_price:
             params["maxPrice"] = max_price
             
         try:
-            response = requests.get(url, headers=self._get_headers(), params=params)
+            print(f"[AMADEUS] Fetching token...")
+            headers = self._get_headers()
+            print(f"[AMADEUS] Token obtained, sending request to {url}")
+            print(f"[AMADEUS] Params: {params}")
+            
+            response = requests.get(url, headers=headers, params=params)
+            
+            print(f"[AMADEUS] Response status: {response.status_code}")
+            print(f"[AMADEUS] Response: {response.text}")
             
             if response.status_code != 200:
                 error_msg = response.json().get("errors", [{}])[0].get("detail", response.text)
+                print(f"[AMADEUS] Error: {error_msg}")
                 return {"error": error_msg, "data": []}
             
             data = response.json()

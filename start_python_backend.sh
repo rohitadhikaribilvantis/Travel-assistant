@@ -1,3 +1,3 @@
 #!/bin/bash
-cd /home/runner/workspace/python_backend
-exec python app.py
+cd /home/runner/workspace/server
+exec python main.py
