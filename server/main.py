@@ -84,6 +84,7 @@ class ChatMessageModel(BaseModel):
     flightResults: Optional[list] = []
     isStreaming: Optional[bool] = False
     memoryContext: Optional[str] = None
+    appliedPrefs: Optional[str] = None
 
 class ChatRequest(BaseModel):
     message: str
@@ -385,6 +386,7 @@ async def chat(request: ChatRequest, current_user: dict = Depends(get_current_us
             timestamp=datetime.now().isoformat(),
             flightResults=result.get("flight_results", []),
             memoryContext=result.get("memory_context"),
+            appliedPrefs=result.get("applied_prefs_summary"),
         )
 
         # Add messages to conversation
@@ -482,7 +484,7 @@ async def get_user_preferences(current_user: dict = Depends(get_current_user)):
     """Get user's stored travel preferences."""
     from memory_manager import memory_manager
     try:
-        preferences = memory_manager.summarize_preferences(current_user["id"])
+        preferences = memory_manager.summarize_preferences(current_user["id"], include_ids=True)
         return {
             "userId": current_user["id"],
             "preferences": preferences,
@@ -532,6 +534,26 @@ async def add_preference(request: dict, current_user: dict = Depends(get_current
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error adding preference: {str(e)}")
+
+@app.delete("/api/memory/preferences/{preference_text}")
+async def delete_preference(preference_text: str, current_user: dict = Depends(get_current_user)):
+    """Delete a user's preference by text."""
+    from memory_manager import memory_manager
+    try:
+        result = memory_manager.remove_preference(current_user["id"], preference_text)
+        
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result.get("error", "Preference not found"))
+        
+        return {
+            "success": True,
+            "message": f"Preference removed successfully",
+            "deletedPreference": preference_text
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting preference: {str(e)}")
 
 @app.get("/api/memory/travel-history")
 async def get_travel_history(current_user: dict = Depends(get_current_user)):

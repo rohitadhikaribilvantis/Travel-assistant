@@ -47,6 +47,12 @@ export function MessageBubble({ message, onShowFilter }: MessageBubbleProps) {
           </Badge>
         )}
 
+        {message.appliedPrefs && (
+          <Badge variant="outline" className="text-xs text-muted-foreground">
+            Since you prefer: {message.appliedPrefs}
+          </Badge>
+        )}
+
         <div
           className={cn(
             "rounded-2xl px-4 py-3",

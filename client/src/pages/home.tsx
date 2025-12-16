@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { ChatHeader } from "@/components/chat/chat-header";
 import { ChatContainer } from "@/components/chat/chat-container";
 import { ChatInput } from "@/components/chat/chat-input";
@@ -32,7 +32,16 @@ export default function Home() {
   const [isResizing, setIsResizing] = useState(false);
   const [titleSavedForConv, setTitleSavedForConv] = useState<string | null>(null);
   const [isLoadingConversation, setIsLoadingConversation] = useState(false);
+  const [preferencesRefreshTrigger, setPreferencesRefreshTrigger] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Trigger preference refresh after each message
+  useEffect(() => {
+    if (!isLoading && messages.length > 0) {
+      // Refresh preferences when loading finishes
+      setPreferencesRefreshTrigger(prev => prev + 1);
+    }
+  }, [isLoading, messages.length]);
 
   // Fetch conversations on mount or when token changes
   useEffect(() => {
@@ -279,7 +288,7 @@ export default function Home() {
       />
 
       <div className="flex flex-1 flex-col">
-        <ChatHeader />
+        <ChatHeader onPreferencesRefresh={() => setPreferencesRefreshTrigger(prev => prev + 1)} />
         <ChatContainer messages={messages} isLoading={isLoading} />
         <ChatInput onSendMessage={sendMessage} isLoading={isLoading} messages={messages} />
       </div>

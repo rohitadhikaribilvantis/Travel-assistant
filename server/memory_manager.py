@@ -100,17 +100,25 @@ class TravelMemoryManager:
         """
         memory = self._get_memory()
         if not memory:
+            print(f"[MEMORY] mem0 not initialized for user {user_id}")
             return []
         
         try:
             if query:
+                print(f"[MEMORY] Searching for '{query}' for user {user_id}")
                 results = memory.search(query, user_id=user_id)
-                return results.get("results", []) if isinstance(results, dict) else results
+                memories = results.get("results", []) if isinstance(results, dict) else results
             else:
+                print(f"[MEMORY] Getting all memories for user {user_id}")
                 all_memories = memory.get_all(user_id=user_id)
-                return all_memories.get("results", []) if isinstance(all_memories, dict) else (all_memories if isinstance(all_memories, list) else [])
+                memories = all_memories.get("results", []) if isinstance(all_memories, dict) else (all_memories if isinstance(all_memories, list) else [])
+            
+            print(f"[MEMORY] Retrieved {len(memories)} memories for user {user_id}: {memories}")
+            return memories
         except Exception as e:
-            print(f"Error retrieving memories: {e}")
+            print(f"[MEMORY ERROR] Error retrieving memories for user {user_id}: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def add_memory(self, user_id: str, messages: List[Dict]) -> Dict:
@@ -126,13 +134,19 @@ class TravelMemoryManager:
         """
         memory = self._get_memory()
         if not memory:
+            print(f"[MEMORY ERROR] mem0 not available, cannot add memory for user {user_id}")
             return {"error": "Memory system not available"}
         
         try:
+            print(f"[MEMORY] Adding {len(messages)} message(s) to memory for user {user_id}")
+            print(f"[MEMORY] Messages: {messages}")
             result = memory.add(messages, user_id=user_id)
+            print(f"[MEMORY] Successfully added memory, result: {result}")
             return result
         except Exception as e:
-            print(f"Error adding memory: {e}")
+            print(f"[MEMORY ERROR] Error adding memory for user {user_id}: {e}")
+            import traceback
+            traceback.print_exc()
             return {"error": str(e)}
     
     def store_preference(self, user_id: str, preference_type: str, preference_value: str):
@@ -206,8 +220,10 @@ class TravelMemoryManager:
         try:
             # Get all memories
             memories = self.get_user_memories(user_id)
+            print(f"[CONTEXT] Retrieved {len(memories)} memories for user {user_id}")
             
             if not memories:
+                print(f"[CONTEXT] No memories found for user {user_id}")
                 return ""
             
             preferences = []
@@ -225,6 +241,8 @@ class TravelMemoryManager:
                 else:
                     preferences.append(memory_text)
             
+            print(f"[CONTEXT] Found {len(preferences)} preferences and {len(travel_history)} travel history items")
+            
             context_parts = []
             
             if preferences:
@@ -235,9 +253,13 @@ class TravelMemoryManager:
                 context_parts.append("\nTRAVEL HISTORY:")
                 context_parts.extend([f"- {h}" for h in travel_history])
             
-            return "\n".join(context_parts) if context_parts else ""
+            result = "\n".join(context_parts) if context_parts else ""
+            print(f"[CONTEXT] Final context: {result}")
+            return result
         except Exception as e:
-            print(f"Error getting user context: {e}")
+            print(f"[CONTEXT ERROR] Error getting user context: {e}")
+            import traceback
+            traceback.print_exc()
             return ""
     
     def extract_and_store_preferences(self, user_id: str, user_message: str, assistant_response: str):
@@ -324,11 +346,12 @@ class TravelMemoryManager:
         """Get budget and pricing preferences."""
         return self.get_user_memories(user_id, query="budget price cost expensive cheap")
     
-    def summarize_preferences(self, user_id: str) -> Dict:
+    def summarize_preferences(self, user_id: str, include_ids: bool = False) -> Dict:
         """
         Get a structured summary of all user preferences.
         
         Returns a dictionary with categorized preferences.
+        If include_ids is True, returns objects with 'id', 'text', and 'memory' fields.
         """
         try:
             all_memories = self.get_user_memories(user_id)
@@ -349,31 +372,97 @@ class TravelMemoryManager:
                 if not memory_text:
                     continue
                 
+                memory_id = mem.get("id", None) if isinstance(mem, dict) else None
                 memory_lower = memory_text.lower()
+                
+                # Create entry (with or without ID)
+                if include_ids:
+                    entry = {"id": memory_id, "text": memory_text, "memory": memory_text}
+                else:
+                    entry = memory_text
                 
                 # Categorize the memory
                 if any(word in memory_lower for word in ["seat", "window", "aisle", "middle", "exit row"]):
-                    summary["seat_preferences"].append(memory_text)
+                    summary["seat_preferences"].append(entry)
                 elif any(word in memory_lower for word in ["airline", "carrier", "united", "delta", "american"]):
-                    summary["airline_preferences"].append(memory_text)
+                    summary["airline_preferences"].append(entry)
                 elif any(word in memory_lower for word in ["morning", "evening", "afternoon", "time", "depart", "red-eye"]):
-                    summary["time_preferences"].append(memory_text)
+                    summary["time_preferences"].append(entry)
                 elif any(word in memory_lower for word in ["direct", "non-stop", "layover", "stop"]):
-                    summary["flight_type_preferences"].append(memory_text)
+                    summary["flight_type_preferences"].append(entry)
                 elif any(word in memory_lower for word in ["business", "economy", "premium", "first class", "cabin"]):
-                    summary["cabin_class_preferences"].append(memory_text)
+                    summary["cabin_class_preferences"].append(entry)
                 elif any(word in memory_lower for word in ["budget", "price", "cost", "cheap", "expensive"]):
-                    summary["budget_info"].append(memory_text)
+                    summary["budget_info"].append(entry)
                 elif any(word in memory_lower for word in ["route", "traveled", "booked", "flight"]):
-                    summary["routes"].append(memory_text)
+                    summary["routes"].append(entry)
                 else:
-                    summary["other_preferences"].append(memory_text)
+                    summary["other_preferences"].append(entry)
             
             # Remove empty categories
             return {k: v for k, v in summary.items() if v}
         except Exception as e:
             print(f"Error summarizing preferences: {e}")
             return {}
+    
+    def delete_memory(self, user_id: str, memory_id: str) -> Dict:
+        """
+        Delete a specific memory by ID.
+        
+        Args:
+            user_id: The user identifier
+            memory_id: The ID of the memory to delete
+            
+        Returns:
+            Result of deletion
+        """
+        memory = self._get_memory()
+        if not memory:
+            print(f"[MEMORY ERROR] mem0 not available, cannot delete memory for user {user_id}")
+            return {"error": "Memory system not available"}
+        
+        try:
+            print(f"[MEMORY] Deleting memory {memory_id} for user {user_id}")
+            # mem0 doesn't have a direct delete by ID, so we'll search and identify
+            # For now, we'll store this as a soft delete indicator
+            # In practice, you'd need to use mem0's API more directly
+            result = memory.delete(memory_id, user_id=user_id) if hasattr(memory, 'delete') else {"error": "Delete not supported"}
+            print(f"[MEMORY] Delete result: {result}")
+            return result
+        except Exception as e:
+            print(f"[MEMORY ERROR] Error deleting memory {memory_id} for user {user_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"error": str(e)}
+    
+    def remove_preference(self, user_id: str, preference_text: str) -> Dict:
+        """
+        Remove a preference by matching its text.
+        This is a workaround since mem0 doesn't have direct ID-based deletion.
+        
+        Args:
+            user_id: The user identifier
+            preference_text: The text of the preference to remove
+            
+        Returns:
+            Result of removal
+        """
+        try:
+            # Get all memories
+            all_memories = self.get_user_memories(user_id)
+            
+            # Find and remove matching memory
+            for mem in all_memories:
+                memory_text = mem.get("memory", "") if isinstance(mem, dict) else str(mem)
+                if preference_text.strip().lower() == memory_text.strip().lower():
+                    memory_id = mem.get("id", None)
+                    if memory_id:
+                        return self.delete_memory(user_id, memory_id)
+            
+            return {"error": "Preference not found"}
+        except Exception as e:
+            print(f"[MEMORY ERROR] Error removing preference for user {user_id}: {e}")
+            return {"error": str(e)}
     
     def get_full_user_profile(self, user_id: str) -> Dict:
         """
@@ -394,3 +483,7 @@ class TravelMemoryManager:
         except Exception as e:
             print(f"Error getting user profile: {e}")
             return {"user_id": user_id, "error": str(e)}
+
+
+# Instantiate global memory manager
+memory_manager = TravelMemoryManager()
