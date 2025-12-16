@@ -66,16 +66,43 @@ export function FlightCard({ flight, index }: FlightCardProps) {
     const origin = firstSegment.departure.iataCode;
     const destination = lastSegment.arrival.iataCode;
     const departDate = firstSegment.departure.at.split("T")[0];
+    const returnDate = returnFlight ? returnFlight.segments[returnFlight.segments.length - 1].arrival.at.split("T")[0] : null;
     const departTime = firstSegment.departure.at.split("T")[1]?.substring(0, 5);
     const arrivalTime = lastSegment.arrival.at.split("T")[1]?.substring(0, 5);
     const carrier = firstSegment.carrierCode;
     const flightNumber = firstSegment.number;
-
+    const cabin = flight.travelClass?.toLowerCase() || "economy";
+    
+    // Format dates as YYYYMMDD for Google Flights
+    const departDateFormatted = departDate.replace(/-/g, "");
+    const returnDateFormatted = returnDate ? returnDate.replace(/-/g, "") : "";
+    
+    // Google Flights URL parameters
+    // Format: /flights?tfs=origin destination departdate [return date] etc
+    let googleFlightsUrl = `https://www.google.com/flights?`;
+    googleFlightsUrl += `hl=en&`;
+    googleFlightsUrl += `curr=${flight.price.currency || "USD"}&`;
+    
+    // Add flight leg parameters
+    if (returnDate) {
+      // Round trip: tfs=origin destination departdate return airlinefilter
+      googleFlightsUrl += `tfs=from:${origin},to:${destination},departure:${departDate}&`;
+      googleFlightsUrl += `tfs=from:${destination},to:${origin},departure:${returnDate}`;
+    } else {
+      // One-way: just single tfs parameter
+      googleFlightsUrl += `tfs=from:${origin},to:${destination},departure:${departDate}`;
+    }
+    
+    // Add cabin class if available
+    if (cabin && cabin !== "economy") {
+      googleFlightsUrl += `&cabinclass=${cabin === "business" ? "b" : cabin === "first" ? "f" : "p"}`;
+    }
+    
     const baseUrls = {
-      google: `https://www.google.com/flights/search?tfs=${origin}${destination}${departDate.replace(/-/g, "")}r`,
-      skyscanner: `https://www.skyscanner.com/transport/flights/${origin}/${destination}/${departDate}?adultsv2=1&cabinclass=${flight.travelClass?.toLowerCase() || "economy"}`,
+      google: googleFlightsUrl,
+      skyscanner: `https://www.skyscanner.com/transport/flights/${origin}/${destination}/${departDate}?adultsv2=1&cabinclass=${cabin}`,
       kayak: `https://www.kayak.com/flights/${origin}-${destination}/${departDate}?a=${carrier}`,
-      expedia: `https://www.expedia.com/Flights-Search?trip=oneway&leg1=from:${origin},to:${destination},departure:${departDate}&passengers=1&cabin=${flight.travelClass?.toLowerCase() || "economy"}`,
+      expedia: `https://www.expedia.com/Flights-Search?trip=oneway&leg1=from:${origin},to:${destination},departure:${departDate}&passengers=1&cabin=${cabin}`,
     };
     return baseUrls[website as keyof typeof baseUrls] || baseUrls.google;
   };

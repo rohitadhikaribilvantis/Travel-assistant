@@ -568,11 +568,8 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
         has_any_preferences = False
         for category, items in merged_prefs.items():
             if items:
-                has_any_preferences = True
-                if not pref_lines:  # Add header only if we have preferences
-                    pref_lines.append("Here are your currently stored travel preferences:\n")
-                display_name = category_display.get(category, category.replace("_", " ").title())
-                pref_lines.append(f"\n{display_name}:")
+                # First, process and clean items
+                valid_items = []
                 for item in items:
                     if isinstance(item, dict):
                         item_text = item.get("text", item.get("memory", str(item)))
@@ -583,9 +580,29 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
                     item_text = (item_text
                         .replace("User's travel preference type is ", "")
                         .replace("User ", "")
+                        .replace("Prefers", "")
+                        .replace("prefers", "")
                         .strip())
                     
+                    # Skip very generic terms
+                    if item_text.lower() in ["seat", "airline", "preference", "type"]:
+                        continue
+                    
+                    # Capitalize first letter if needed
+                    if item_text and item_text[0].islower():
+                        item_text = item_text[0].upper() + item_text[1:]
+                    
                     if item_text:  # Only add if not empty after cleaning
+                        valid_items.append(item_text)
+                
+                # Only add category header if there are valid items
+                if valid_items:
+                    has_any_preferences = True
+                    if not pref_lines:  # Add header only if we have preferences
+                        pref_lines.append("Here are your currently stored travel preferences:\n")
+                    display_name = category_display.get(category, category.replace("_", " ").title())
+                    pref_lines.append(f"\n{display_name}:")
+                    for item_text in valid_items:
                         pref_lines.append(f"  • {item_text}")
         
         if has_any_preferences:

@@ -13,13 +13,21 @@ interface ChatInputProps {
   currentPreferences?: CurrentPreferences;
 }
 
+// Main suggested prompts - varied and interesting
 const SUGGESTED_PROMPTS = [
   "Find flights from NYC to London next week",
+  "What are my current travel preferences?",
   "I need a one-way ticket to Tokyo",
   "Search for cheap flights to Paris in December",
   "Find direct flights from LAX to Miami",
+  "Show me weekend getaway options from my home city",
+  "What routes do I travel most frequently?",
+  "Find flights matching my travel preferences",
+  "I'm planning a solo trip - what do you recommend?",
+  "Search for business class flights to Singapore",
 ];
 
+// Filter suggestions for after search results
 const FILTER_SUGGESTIONS = [
   "Show me cheaper options",
   "I prefer direct flights only",
@@ -27,16 +35,33 @@ const FILTER_SUGGESTIONS = [
   "Show non-stop flights under $500",
   "Filter by my preferred airline",
   "Show me the fastest options",
+  "What are my saved preferences?",
+  "Exclude red-eyes",
 ];
+
+// Helper function to get random suggestions without repetition
+function getRandomSuggestions(suggestions: string[], count: number = 3): string[] {
+  const shuffled = [...suggestions].sort(() => 0.5 - Math.random());
+  return shuffled.slice(0, Math.min(count, suggestions.length));
+}
 
 export function ChatInput({ onSendMessage, isLoading, disabled, messages, currentPreferences }: ChatInputProps) {
   const [message, setMessage] = useState("");
+  const [displayedSuggestions, setDisplayedSuggestions] = useState<string[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Initialize suggestions on mount
+  useEffect(() => {
+    const lastMessage = messages?.[messages.length - 1];
+    const hasFlights = lastMessage?.flightResults && lastMessage.flightResults.length > 0;
+    const suggestionPool = hasFlights ? FILTER_SUGGESTIONS : SUGGESTED_PROMPTS;
+    setDisplayedSuggestions(getRandomSuggestions(suggestionPool, 3));
+  }, [messages]);
 
   // Check if last message has flight results
   const lastMessage = messages?.[messages.length - 1];
   const hasFlights = lastMessage?.flightResults && lastMessage.flightResults.length > 0;
-  const suggestions = hasFlights ? FILTER_SUGGESTIONS : SUGGESTED_PROMPTS;
+  const suggestions = displayedSuggestions.length > 0 ? displayedSuggestions : SUGGESTED_PROMPTS;
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -86,6 +111,15 @@ export function ChatInput({ onSendMessage, isLoading, disabled, messages, curren
               {suggestion}
             </Button>
           ))}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleSuggestionClick("Show my current preferences")}
+            disabled={isLoading || disabled}
+            className="whitespace-nowrap text-xs"
+          >
+            Show my current preferences
+          </Button>
         </div>
       )}
 
