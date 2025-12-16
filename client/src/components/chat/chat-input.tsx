@@ -53,24 +53,6 @@ export function ChatInput({ onSendMessage, isLoading, disabled }: ChatInputProps
 
   return (
     <div className="sticky bottom-0 z-50 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      {message.length === 0 && (
-        <div className="flex flex-wrap gap-2 px-4 pt-4">
-          {SUGGESTED_PROMPTS.map((prompt, index) => (
-            <Button
-              key={index}
-              variant="outline"
-              size="sm"
-              onClick={() => handleSuggestionClick(prompt)}
-              disabled={isLoading || disabled}
-              className="text-xs"
-              data-testid={`button-suggestion-${index}`}
-            >
-              {prompt}
-            </Button>
-          ))}
-        </div>
-      )}
-
       <form onSubmit={handleSubmit} className="flex items-end gap-2 p-4">
         <div className="relative flex-1">
           <Textarea
