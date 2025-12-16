@@ -476,6 +476,91 @@ async def delete_conversation(conversation_id: str, current_user: dict = Depends
     storage.delete_conversation(conversation_id)
     return {"message": "Conversation deleted"}
 
+# ==================== Memory/Preferences API ====================
+@app.get("/api/memory/preferences")
+async def get_user_preferences(current_user: dict = Depends(get_current_user)):
+    """Get user's stored travel preferences."""
+    from memory_manager import memory_manager
+    try:
+        preferences = memory_manager.summarize_preferences(current_user["id"])
+        return {
+            "userId": current_user["id"],
+            "preferences": preferences,
+            "count": sum(len(v) for v in preferences.values())
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving preferences: {str(e)}")
+
+@app.get("/api/memory/profile")
+async def get_user_profile(current_user: dict = Depends(get_current_user)):
+    """Get comprehensive user profile including all memories and preferences."""
+    from memory_manager import memory_manager
+    try:
+        profile = memory_manager.get_full_user_profile(current_user["id"])
+        return profile
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving profile: {str(e)}")
+
+@app.post("/api/memory/add-preference")
+async def add_preference(request: dict, current_user: dict = Depends(get_current_user)):
+    """Add a new preference entry to user's memory."""
+    from memory_manager import memory_manager
+    try:
+        category = request.get("category", "preference")
+        content = request.get("content")
+        memory_type = request.get("type")
+        
+        if not content:
+            raise HTTPException(status_code=400, detail="Content is required")
+        
+        result = memory_manager.add_structured_memory(
+            user_id=current_user["id"],
+            category=category,
+            content=content,
+            memory_type=memory_type,
+            metadata=request.get("metadata")
+        )
+        
+        return {
+            "success": "error" not in result,
+            "memory_id": result.get("id"),
+            "content": content,
+            "category": category,
+            "type": memory_type
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error adding preference: {str(e)}")
+
+@app.get("/api/memory/travel-history")
+async def get_travel_history(current_user: dict = Depends(get_current_user)):
+    """Get user's travel history."""
+    from memory_manager import memory_manager
+    try:
+        history = memory_manager.get_travel_history(current_user["id"])
+        return {
+            "userId": current_user["id"],
+            "history": history,
+            "count": len(history)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving travel history: {str(e)}")
+
+@app.get("/api/memory/routes")
+async def get_favorite_routes(current_user: dict = Depends(get_current_user)):
+    """Get user's favorite/frequent routes."""
+    from memory_manager import memory_manager
+    try:
+        routes = memory_manager.get_favorite_routes(current_user["id"])
+        return {
+            "userId": current_user["id"],
+            "routes": routes,
+            "count": len(routes)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving routes: {str(e)}")
+
 # ==================== Run Server ====================
 if __name__ == "__main__":
     import uvicorn

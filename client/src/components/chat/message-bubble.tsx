@@ -1,4 +1,5 @@
 import { Bot, User, Sliders } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@shared/schema";
 import { FlightCard } from "./flight-card";
@@ -64,9 +65,9 @@ export function MessageBubble({ message, onShowFilter }: MessageBubbleProps) {
               </span>
             </div>
           ) : (
-            <p className="whitespace-pre-wrap text-sm leading-relaxed">
-              {message.content}
-            </p>
+            <div className="prose prose-sm max-w-none text-sm leading-relaxed dark:prose-invert prose-headings:mt-3 prose-headings:mb-2 prose-h1:text-base prose-h2:text-sm prose-h3:text-xs prose-p:my-1 prose-ul:my-1 prose-li:my-0 prose-strong:font-semibold prose-code:bg-secondary prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-pre:bg-secondary prose-pre:p-3 prose-pre:overflow-x-auto">
+              <ReactMarkdown>{message.content}</ReactMarkdown>
+            </div>
           )}
         </div>
 

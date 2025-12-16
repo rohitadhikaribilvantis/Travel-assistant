@@ -1,6 +1,50 @@
 import os
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Literal
 from datetime import datetime
+
+# Memory Schema Types
+PreferenceType = Literal["seat", "airline", "departure_time", "flight_type", "cabin_class", "red_eye", "baggage", "general"]
+MemoryCategory = Literal["preference", "travel_history", "route", "airline", "budget"]
+
+class TravelMemory:
+    """Standard schema for travel memories."""
+    
+    def __init__(
+        self,
+        user_id: str,
+        category: MemoryCategory,
+        content: str,
+        memory_type: Optional[str] = None,
+        metadata: Optional[Dict] = None
+    ):
+        self.user_id = user_id
+        self.category = category
+        self.content = content
+        self.memory_type = memory_type
+        self.metadata = metadata or {}
+        self.created_at = datetime.utcnow().isoformat()
+    
+    def to_message_format(self) -> Dict:
+        """Convert to mem0 message format."""
+        return {
+            "role": "user",
+            "content": self.format_message()
+        }
+    
+    def format_message(self) -> str:
+        """Format memory as natural language for mem0."""
+        if self.category == "preference":
+            return f"Travel Preference: {self.content} (Type: {self.memory_type})"
+        elif self.category == "travel_history":
+            return f"Travel History: {self.content}"
+        elif self.category == "route":
+            return f"Frequent Route: {self.content}"
+        elif self.category == "airline":
+            return f"Airline Experience: {self.content}"
+        elif self.category == "budget":
+            return f"Budget Preference: {self.content}"
+        return f"{self.category.title()}: {self.content}"
+
 
 class TravelMemoryManager:
     """Manages user travel preferences and history using mem0."""
@@ -226,6 +270,127 @@ class TravelMemoryManager:
             self.add_memory(user_id, messages)
         
         return should_store
-
-
-memory_manager = TravelMemoryManager()
+    
+    def add_structured_memory(
+        self,
+        user_id: str,
+        category: MemoryCategory,
+        content: str,
+        memory_type: Optional[str] = None,
+        metadata: Optional[Dict] = None
+    ) -> Dict:
+        """
+        Add a structured memory entry with consistent schema.
+        
+        Args:
+            user_id: User identifier
+            category: Category of memory (preference, travel_history, route, airline, budget)
+            content: Memory content
+            memory_type: Optional specific type (e.g., 'seat', 'airline' for preferences)
+            metadata: Optional additional metadata
+            
+        Returns:
+            Result of memory addition
+        """
+        memory = TravelMemory(user_id, category, content, memory_type, metadata)
+        messages = [memory.to_message_format()]
+        
+        result = self.add_memory(user_id, messages)
+        
+        if result and "error" not in result:
+            result["category"] = category
+            result["memory_type"] = memory_type
+            result["created_at"] = memory.created_at
+        
+        return result
+    
+    def get_preference_memories(self, user_id: str) -> List[Dict]:
+        """Get all preference-related memories for a user."""
+        return self.get_user_memories(user_id, query="travel preferences seat airline time cabin")
+    
+    def get_travel_history(self, user_id: str) -> List[Dict]:
+        """Get travel history memories for a user."""
+        return self.get_user_memories(user_id, query="traveled booked flight journey trip")
+    
+    def get_favorite_routes(self, user_id: str) -> List[Dict]:
+        """Get frequently traveled routes for a user."""
+        return self.get_user_memories(user_id, query="route origin destination frequently")
+    
+    def get_airline_preferences(self, user_id: str) -> List[Dict]:
+        """Get airline-specific memories and preferences."""
+        return self.get_user_memories(user_id, query="airline carrier prefer avoid")
+    
+    def get_budget_preferences(self, user_id: str) -> List[Dict]:
+        """Get budget and pricing preferences."""
+        return self.get_user_memories(user_id, query="budget price cost expensive cheap")
+    
+    def summarize_preferences(self, user_id: str) -> Dict:
+        """
+        Get a structured summary of all user preferences.
+        
+        Returns a dictionary with categorized preferences.
+        """
+        try:
+            all_memories = self.get_user_memories(user_id)
+            
+            summary = {
+                "seat_preferences": [],
+                "airline_preferences": [],
+                "time_preferences": [],
+                "flight_type_preferences": [],
+                "cabin_class_preferences": [],
+                "routes": [],
+                "budget_info": [],
+                "other_preferences": []
+            }
+            
+            for mem in all_memories:
+                memory_text = mem.get("memory", "") if isinstance(mem, dict) else str(mem)
+                if not memory_text:
+                    continue
+                
+                memory_lower = memory_text.lower()
+                
+                # Categorize the memory
+                if any(word in memory_lower for word in ["seat", "window", "aisle", "middle", "exit row"]):
+                    summary["seat_preferences"].append(memory_text)
+                elif any(word in memory_lower for word in ["airline", "carrier", "united", "delta", "american"]):
+                    summary["airline_preferences"].append(memory_text)
+                elif any(word in memory_lower for word in ["morning", "evening", "afternoon", "time", "depart", "red-eye"]):
+                    summary["time_preferences"].append(memory_text)
+                elif any(word in memory_lower for word in ["direct", "non-stop", "layover", "stop"]):
+                    summary["flight_type_preferences"].append(memory_text)
+                elif any(word in memory_lower for word in ["business", "economy", "premium", "first class", "cabin"]):
+                    summary["cabin_class_preferences"].append(memory_text)
+                elif any(word in memory_lower for word in ["budget", "price", "cost", "cheap", "expensive"]):
+                    summary["budget_info"].append(memory_text)
+                elif any(word in memory_lower for word in ["route", "traveled", "booked", "flight"]):
+                    summary["routes"].append(memory_text)
+                else:
+                    summary["other_preferences"].append(memory_text)
+            
+            # Remove empty categories
+            return {k: v for k, v in summary.items() if v}
+        except Exception as e:
+            print(f"Error summarizing preferences: {e}")
+            return {}
+    
+    def get_full_user_profile(self, user_id: str) -> Dict:
+        """
+        Get comprehensive user profile including all memories and preferences.
+        
+        Returns structured profile with all categories.
+        """
+        try:
+            return {
+                "user_id": user_id,
+                "preferences": self.summarize_preferences(user_id),
+                "travel_history": self.get_travel_history(user_id),
+                "favorite_routes": self.get_favorite_routes(user_id),
+                "airline_preferences": self.get_airline_preferences(user_id),
+                "budget_preferences": self.get_budget_preferences(user_id),
+                "last_updated": datetime.utcnow().isoformat()
+            }
+        except Exception as e:
+            print(f"Error getting user profile: {e}")
+            return {"user_id": user_id, "error": str(e)}

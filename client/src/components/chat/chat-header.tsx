@@ -6,6 +6,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/use-auth";
 import { useState, useEffect } from "react";
 import { usePreferences } from "@/hooks/use-preferences";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,6 +25,9 @@ export function ChatHeader({ }: ChatHeaderProps) {
   const [, navigate] = useLocation();
   const { preferences, setPreferences, removeCustomPreference, addMultiplePreferences } = usePreferences(user?.id);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [directFlightsOnly, setDirectFlightsOnly] = useState(false);
+  const [avoidRedEye, setAvoidRedEye] = useState(false);
+  const [preferredAirlines, setPreferredAirlines] = useState<string>("");
 
   // Watch for new extracted preferences from chat
   useEffect(() => {
@@ -244,25 +249,47 @@ export function ChatHeader({ }: ChatHeaderProps) {
 
             <DropdownMenuSeparator />
             <div className="px-3 py-2">
-              <p className="text-xs font-medium mb-2">Book Flights</p>
-              <div className="space-y-1">
-                {[
-                  { name: "Google Flights", url: "https://www.google.com/flights" },
-                  { name: "Skyscanner", url: "https://www.skyscanner.com" },
-                  { name: "Kayak", url: "https://www.kayak.com" },
-                  { name: "Expedia", url: "https://www.expedia.com" },
-                  { name: "Booking.com", url: "https://www.booking.com" },
-                ].map((site) => (
-                  <a
-                    key={site.name}
-                    href={site.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block text-xs text-primary hover:underline p-1 rounded hover:bg-muted"
-                  >
-                    {site.name} →
-                  </a>
-                ))}
+              <p className="text-xs font-medium mb-3">Flight Preferences</p>
+              
+              <div className="space-y-3">
+                {/* Direct Flights Only */}
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="direct-flights" className="text-xs cursor-pointer">
+                    Direct Flights Only
+                  </Label>
+                  <Switch
+                    id="direct-flights"
+                    checked={directFlightsOnly}
+                    onCheckedChange={setDirectFlightsOnly}
+                  />
+                </div>
+
+                {/* Avoid Red-Eye */}
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="avoid-red-eye" className="text-xs cursor-pointer">
+                    Avoid Red-Eye
+                  </Label>
+                  <Switch
+                    id="avoid-red-eye"
+                    checked={avoidRedEye}
+                    onCheckedChange={setAvoidRedEye}
+                  />
+                </div>
+
+                {/* Preferred Airlines */}
+                <div>
+                  <Label htmlFor="preferred-airlines" className="text-xs">
+                    Preferred Airlines
+                  </Label>
+                  <input
+                    id="preferred-airlines"
+                    type="text"
+                    value={preferredAirlines}
+                    onChange={(e) => setPreferredAirlines(e.target.value)}
+                    placeholder="e.g., United, Delta"
+                    className="w-full mt-1 px-2 py-1 text-xs border rounded bg-background"
+                  />
+                </div>
               </div>
             </div>
           </DropdownMenuContent>

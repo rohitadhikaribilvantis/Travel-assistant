@@ -192,10 +192,27 @@ def get_system_prompt_with_memory(user_id: str) -> str:
     base_prompt = SYSTEM_PROMPT.format(today=datetime.now().strftime("%Y-%m-%d"))
     
     # Retrieve comprehensive user context from memories
-    user_context = memory_manager.get_user_context(user_id)
-    
-    if user_context:
-        base_prompt += f"\n\nCONTEXT ABOUT THIS USER:\n{user_context}\n\nApply these preferences to flight searches and recommendations when relevant."
+    try:
+        user_context = memory_manager.get_user_context(user_id)
+        
+        # Also get structured preference summary
+        pref_summary = memory_manager.summarize_preferences(user_id)
+        
+        if user_context or pref_summary:
+            base_prompt += "\n\nCONTEXT ABOUT THIS USER:\n" + user_context
+            
+            if pref_summary:
+                base_prompt += "\n\nSTRUCTURED PREFERENCES:\n"
+                for category, items in pref_summary.items():
+                    if items:
+                        category_name = category.replace("_", " ").title()
+                        base_prompt += f"\n{category_name}:\n"
+                        for item in items:
+                            base_prompt += f"  - {item}\n"
+            
+            base_prompt += "\n\nApply these preferences to flight searches and recommendations when relevant."
+    except Exception as e:
+        print(f"Error enriching prompt with memory: {e}")
     
     return base_prompt
 
@@ -287,10 +304,16 @@ def execute_tool(tool_name: str, arguments: dict, user_id: str) -> dict:
         elif any(word in preference_lower for word in ["baggage", "luggage", "bag"]):
             preference_type = "baggage"
         
-        # Store preference in mem0
-        memory_manager.store_preference(user_id, preference_type, preference)
+        # Store preference in mem0 using structured schema
+        result = memory_manager.add_structured_memory(
+            user_id=user_id,
+            category="preference",
+            content=preference,
+            memory_type=preference_type,
+            metadata={"extracted_at": datetime.now().isoformat()}
+        )
         
-        return {"success": True, "preference": preference, "preference_type": preference_type}
+        return {"success": True, "preference": preference, "preference_type": preference_type, "stored": bool(result and "error" not in result)}
     
     return {"error": "Unknown tool"}
 
