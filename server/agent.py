@@ -59,7 +59,7 @@ def extract_preferences_from_message(user_message: str) -> list[str]:
     
     # Budget preferences
     budget_patterns = [
-        (r"(?:budget|cheap|economy|low\s+cost)", "budget conscious"),
+        (r"(?:budget|cheap|low\s+cost)", "budget conscious"),
         (r"(?:luxury|premium|first\s+class|business\s+class)", "luxury travel"),
     ]
     
@@ -551,18 +551,18 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
         pref_lines = []
         
         category_display = {
-            "seat_preferences": "🪑 Seat Preferences",
-            "airline_preferences": "✈️ Preferred Airlines",
-            "time_preferences": "🕐 Time Preferences",
-            "flight_type_preferences": "🛫 Flight Type",
-            "cabin_class_preferences": "🎫 Cabin Class",
-            "red_eye_preferences": "🌙 Red-Eye Preferences",
-            "passenger_preferences": "👥 Number of Passengers",
-            "baggage_preferences": "🎒 Baggage",
+            "seat": "🪑 Seat Preferences",
+            "airline": "✈️ Preferred Airlines",
+            "departure_time": "🕐 Time Preferences",
+            "flight_type": "🛫 Flight Type",
+            "cabin_class": "🎫 Cabin Class",
+            "red_eye": "🌙 Red-Eye Preferences",
+            "passenger": "👥 Passenger Type",
+            "baggage": "🎒 Baggage",
             "routes": "🗺️ Favorite Routes",
-            "budget_info": "💰 Budget",
-            "trip_type_preferences": "✈️ Trip Type",
-            "other_preferences": "📋 Other"
+            "budget": "💰 Budget",
+            "trip_type": "✈️ Trip Type",
+            "other": "📋 Other"
         }
         
         has_any_preferences = False

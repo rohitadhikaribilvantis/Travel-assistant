@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useAuth } from "./use-auth";
+import type { CurrentPreferences } from "./use-chat";
 
 export interface StoredPreference {
   type: string;
@@ -42,10 +43,12 @@ export function useMemory(userId?: string, refreshTrigger?: number) {
         throw new Error("Failed to fetch preferences");
       }
 
-      return response.json() as Promise<PreferenceSummary>;
+      const data = await response.json();
+      // API returns { userId, preferences, count } - extract the preferences object
+      return data.preferences as PreferenceSummary;
     },
     enabled: !!userId && !!token,
-    staleTime: 10000, // 10 seconds since we're actively refreshing
+    staleTime: 0, // Always consider data stale so refetch() will always fetch fresh data
   });
 
   // Fetch user profile with full memory
@@ -152,6 +155,32 @@ export function useMemory(userId?: string, refreshTrigger?: number) {
     return allPrefs;
   };
 
+  // Get merged preferences (stored + current UI state) - shows what the AI actually uses
+  const getMergedPreferences = async (currentPreferences: CurrentPreferences): Promise<PreferenceSummary | null> => {
+    if (!userId || !token) return null;
+    
+    try {
+      const response = await fetch("/api/memory/preferences/merged", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ currentPreferences }),
+      });
+      
+      if (!response.ok) {
+        throw new Error("Failed to fetch merged preferences");
+      }
+      
+      const data = await response.json();
+      return data.merged;
+    } catch (error) {
+      console.error("Error getting merged preferences:", error);
+      return null;
+    }
+  };
+
   return {
     preferences: getFormattedPreferences(),
     profile,
@@ -164,6 +193,7 @@ export function useMemory(userId?: string, refreshTrigger?: number) {
     removePreference,
     isRemovingPreference: removePreferenceMutation.isPending,
     getAllPreferences,
+    getMergedPreferences,
     refetch: refetchPreferences,
   };
 }

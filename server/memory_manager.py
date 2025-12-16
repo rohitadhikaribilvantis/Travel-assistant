@@ -363,17 +363,18 @@ class TravelMemoryManager:
             print(f"[MEMORY] Raw memories retrieved: {all_memories}")
             
             summary = {
-                "seat_preferences": [],
-                "airline_preferences": [],
-                "time_preferences": [],
-                "flight_type_preferences": [],
-                "cabin_class_preferences": [],
-                "red_eye_preferences": [],
-                "trip_type_preferences": [],
-                "passenger_preferences": [],
+                "seat": [],
+                "airline": [],
+                "departure_time": [],
+                "flight_type": [],
+                "cabin_class": [],
+                "red_eye": [],
+                "trip_type": [],
+                "passenger": [],
+                "baggage": [],
                 "routes": [],
-                "budget_info": [],
-                "other_preferences": []
+                "budget": [],
+                "other": []
             }
             
             for mem in all_memories:
@@ -393,39 +394,43 @@ class TravelMemoryManager:
                 print(f"[MEMORY] Processing memory: '{memory_text}' (lower: '{memory_lower}')")
                 
                 # Categorize the memory - Check cabin class FIRST since it's most specific
-                if any(word in memory_lower for word in ["business class", "economy class", "premium economy", "first class", "i prefer"]) and any(word in memory_lower for word in ["class", "cabin"]):
+                if any(word in memory_lower for word in ["business", "economy", "premium", "first"]) and any(word in memory_lower for word in ["class", "cabin"]):
                     print(f"  -> Categorized as CABIN CLASS")
-                    summary["cabin_class_preferences"].append(entry)
+                    summary["cabin_class"].append(entry)
                 elif any(word in memory_lower for word in ["red-eye", "red eye"]):
                     print(f"  -> Categorized as RED EYE")
-                    summary["red_eye_preferences"].append(entry)
+                    summary["red_eye"].append(entry)
                 elif any(word in memory_lower for word in ["round trip", "one-way", "round-trip", "one way"]):
                     print(f"  -> Categorized as TRIP TYPE")
-                    summary["trip_type_preferences"].append(entry)
+                    summary["trip_type"].append(entry)
                 elif any(word in memory_lower for word in ["direct", "non-stop", "layover", "stop"]):
                     print(f"  -> Categorized as FLIGHT TYPE")
-                    summary["flight_type_preferences"].append(entry)
+                    summary["flight_type"].append(entry)
                 elif any(word in memory_lower for word in ["morning", "afternoon", "evening", "depart"]):
                     print(f"  -> Categorized as TIME")
-                    summary["time_preferences"].append(entry)
+                    summary["departure_time"].append(entry)
                 elif any(word in memory_lower for word in ["traveling alone", "solo", "travel alone", "fly alone", "traveling with family", "traveling with kids", "traveling with children", "traveling with partner", "traveling with spouse", "family trip"]):
                     print(f"  -> Categorized as PASSENGER")
-                    summary["passenger_preferences"].append(entry)
+                    summary["passenger"].append(entry)
                 elif any(word in memory_lower for word in ["seat", "window", "aisle", "middle", "exit row"]):
                     print(f"  -> Categorized as SEAT")
-                    summary["seat_preferences"].append(entry)
+                    summary["seat"].append(entry)
                 elif any(word in memory_lower for word in ["airline", "carrier", "united", "delta", "american", "southwest", "jetblue"]):
                     print(f"  -> Categorized as AIRLINE")
-                    summary["airline_preferences"].append(entry)
-                elif any(word in memory_lower for word in ["budget", "price", "cost", "cheap", "expensive"]):
+                    summary["airline"].append(entry)
+                elif any(word in memory_lower for word in ["baggage", "luggage", "bag", "carry-on", "checked"]):
+                    print(f"  -> Categorized as BAGGAGE")
+                    summary["baggage"].append(entry)
+                elif any(word in memory_lower for word in ["budget", "price", "cost"]) and "general" not in memory_lower and "budget-conscious" not in memory_lower:
+                    # Only add specific budget preferences (e.g., "max $500"), skip generic "budget-conscious"
                     print(f"  -> Categorized as BUDGET")
-                    summary["budget_info"].append(entry)
+                    summary["budget"].append(entry)
                 elif any(word in memory_lower for word in ["route", "traveled", "booked", "flight"]):
                     print(f"  -> Categorized as ROUTE")
                     summary["routes"].append(entry)
                 else:
                     print(f"  -> Categorized as OTHER")
-                    summary["other_preferences"].append(entry)
+                    summary["other"].append(entry)
             
             print(f"[MEMORY] Final summary: {summary}")
             # Remove empty categories
@@ -540,24 +545,29 @@ class TravelMemoryManager:
             # Normalize search text
             search_text = preference_text.strip().lower()
             
-            # Find matching memory - try exact match first, then partial
-            exact_match = None
-            partial_matches = []
+            # Find matching memory - try multiple matching strategies
+            target_mem = None
             
             for mem in all_memories:
                 memory_text = mem.get("memory", "") if isinstance(mem, dict) else str(mem)
                 memory_text_lower = memory_text.strip().lower()
                 
-                # Exact match
+                # Strategy 1: Exact match
                 if search_text == memory_text_lower:
-                    exact_match = mem
+                    target_mem = mem
                     break
-                # Partial match
-                elif search_text in memory_text_lower or memory_text_lower in search_text:
-                    partial_matches.append(mem)
-            
-            # Try exact match first, then first partial match
-            target_mem = exact_match or (partial_matches[0] if partial_matches else None)
+                
+                # Strategy 2: Partial match (search_text in memory_text or vice versa)
+                if search_text in memory_text_lower or memory_text_lower in search_text:
+                    target_mem = mem
+                    break
+                
+                # Strategy 3: Fuzzy match - check if most words match
+                search_words = set(search_text.split())
+                memory_words = set(memory_text_lower.split())
+                if len(search_words & memory_words) >= max(1, len(search_words) - 1):
+                    target_mem = mem
+                    break
             
             if target_mem:
                 memory_id = target_mem.get("id", None)

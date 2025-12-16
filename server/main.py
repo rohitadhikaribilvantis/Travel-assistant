@@ -555,6 +555,34 @@ async def get_user_preferences(current_user: dict = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving preferences: {str(e)}")
 
+@app.post("/api/memory/preferences/merged")
+async def get_merged_preferences(
+    body: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get merged preferences (stored + current UI state) - shows what the AI actually uses."""
+    from memory_manager import memory_manager
+    from agent import _merge_preferences
+    try:
+        # Get stored preferences from mem0
+        stored_prefs = memory_manager.summarize_preferences(current_user["id"], include_ids=True)
+        
+        # Get current UI preferences from request
+        current_prefs = body.get("currentPreferences", {})
+        
+        # Merge them (this is what the AI sees)
+        merged = _merge_preferences(stored_prefs, current_prefs)
+        
+        return {
+            "userId": current_user["id"],
+            "merged": merged,
+            "stored": stored_prefs,
+            "current": current_prefs,
+            "count": sum(len(v) for v in merged.values())
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error merging preferences: {str(e)}")
+
 @app.get("/api/memory/profile")
 async def get_user_profile(current_user: dict = Depends(get_current_user)):
     """Get comprehensive user profile including all memories and preferences."""

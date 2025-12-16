@@ -51,6 +51,14 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
     }
   }, []);
 
+  // Auto-refresh preferences when sheet opens
+  useEffect(() => {
+    if (preferencesOpen) {
+      // Force refetch fresh data
+      setTimeout(() => refreshPreferences(), 100);
+    }
+  }, [preferencesOpen, refreshPreferences]);
+
   // Notify parent when preferences change
   useEffect(() => {
     if (onPreferencesChange) {
@@ -252,7 +260,13 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
       
       <div className="flex items-center gap-2">
         {/* Travel Preferences Sheet */}
-        <Sheet open={preferencesOpen} onOpenChange={setPreferencesOpen}>
+        <Sheet open={preferencesOpen} onOpenChange={(open) => {
+          setPreferencesOpen(open);
+          // Refresh preferences when sheet opens
+          if (open) {
+            setTimeout(() => refreshPreferences(), 100);
+          }
+        }}>
           <Button
             variant="ghost"
             size="icon"
@@ -581,8 +595,76 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
                       >
                         <X className="h-4 w-4" />
                       </button>
+                    </div>                  ))}
+
+                  {memoryPreferences?.passenger && memoryPreferences.passenger.length > 0 && memoryPreferences.passenger.map((pref, i) => (
+                    <div key={`pax-${i}`} className="text-sm bg-green-50 dark:bg-green-950 p-3 rounded flex items-center justify-between group hover:bg-green-100 dark:hover:bg-green-900 transition-colors border border-green-200 dark:border-green-800">
+                      <span>👥 {typeof pref === "string" ? pref : pref.text || pref.memory}</span>
+                      <button
+                        onClick={() => handleRemovePreference(pref)}
+                        disabled={isRemovingPreference}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
                     </div>
                   ))}
+
+                  {memoryPreferences?.trip_type && memoryPreferences.trip_type.length > 0 && memoryPreferences.trip_type.map((pref, i) => (
+                    <div key={`trip-${i}`} className="text-sm bg-green-50 dark:bg-green-950 p-3 rounded flex items-center justify-between group hover:bg-green-100 dark:hover:bg-green-900 transition-colors border border-green-200 dark:border-green-800">
+                      <span>🔄 {typeof pref === "string" ? pref : pref.text || pref.memory}</span>
+                      <button
+                        onClick={() => handleRemovePreference(pref)}
+                        disabled={isRemovingPreference}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+
+                  {memoryPreferences?.budget && memoryPreferences.budget.length > 0 && memoryPreferences.budget.map((pref, i) => (
+                    <div key={`budget-${i}`} className="text-sm bg-green-50 dark:bg-green-950 p-3 rounded flex items-center justify-between group hover:bg-green-100 dark:hover:bg-green-900 transition-colors border border-green-200 dark:border-green-800">
+                      <span>💰 {typeof pref === "string" ? pref : pref.text || pref.memory}</span>
+                      <button
+                        onClick={() => handleRemovePreference(pref)}
+                        disabled={isRemovingPreference}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+
+                  {memoryPreferences?.routes && memoryPreferences.routes.length > 0 && memoryPreferences.routes.map((pref, i) => (
+                    <div key={`route-${i}`} className="text-sm bg-green-50 dark:bg-green-950 p-3 rounded flex items-center justify-between group hover:bg-green-100 dark:hover:bg-green-900 transition-colors border border-green-200 dark:border-green-800">
+                      <span>🗺️ {typeof pref === "string" ? pref : pref.text || pref.memory}</span>
+                      <button
+                        onClick={() => handleRemovePreference(pref)}
+                        disabled={isRemovingPreference}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+
+                  {memoryPreferences?.other && memoryPreferences.other.length > 0 && memoryPreferences.other.map((pref, i) => (
+                    <div key={`other-${i}`} className="text-sm bg-green-50 dark:bg-green-950 p-3 rounded flex items-center justify-between group hover:bg-green-100 dark:hover:bg-green-900 transition-colors border border-green-200 dark:border-green-800">
+                      <span>✨ {typeof pref === "string" ? pref : pref.text || pref.memory}</span>
+                      <button
+                        onClick={() => handleRemovePreference(pref)}
+                        disabled={isRemovingPreference}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>                  ))}
                 </div>
               </div>
             </div>
