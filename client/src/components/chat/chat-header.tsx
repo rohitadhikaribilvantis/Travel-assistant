@@ -409,80 +409,9 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
                 </div>
                 
                 <div className="space-y-2">
-                  {/* Show message if no preferences */}
-                  {!(directFlightsOnly || avoidRedEye || cabinClass || preferredTime || tripType ||
-                    (memoryPreferences && Object.values(memoryPreferences).some((cat: any) => cat?.length > 0))) && (
-                    <p className="text-xs text-muted-foreground italic py-2">No preferences saved yet</p>
-                  )}
-                  
-                  {/* Direct Flights Toggle Preference */}
-                  {directFlightsOnly && (
-                    <div className="text-sm bg-blue-50 dark:bg-blue-950 p-3 rounded flex items-center justify-between group hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors border border-blue-200 dark:border-blue-800">
-                      <span className="font-medium">🛫 Direct flights only</span>
-                      <button
-                        onClick={() => setDirectFlightsOnly(false)}
-                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                        title="Remove preference"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Avoid Red-Eye Toggle Preference */}
-                  {avoidRedEye && (
-                    <div className="text-sm bg-blue-50 dark:bg-blue-950 p-3 rounded flex items-center justify-between group hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors border border-blue-200 dark:border-blue-800">
-                      <span className="font-medium">🌙 Avoid red-eye flights</span>
-                      <button
-                        onClick={() => setAvoidRedEye(false)}
-                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                        title="Remove preference"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Cabin Class Preference */}
-                  {cabinClass && cabinClass !== "Economy" && (
-                    <div className="text-sm bg-blue-50 dark:bg-blue-950 p-3 rounded flex items-center justify-between group hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors border border-blue-200 dark:border-blue-800">
-                      <span className="font-medium">🪑 {cabinClass}</span>
-                      <button
-                        onClick={() => setCabinClass("Economy")}
-                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                        title="Remove preference"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Departure Time Preference */}
-                  {preferredTime && (
-                    <div className="text-sm bg-blue-50 dark:bg-blue-950 p-3 rounded flex items-center justify-between group hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors border border-blue-200 dark:border-blue-800">
-                      <span className="font-medium">🕐 {preferredTime} departures</span>
-                      <button
-                        onClick={() => setPreferredTime("")}
-                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                        title="Remove preference"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Trip Type Preference */}
-                  {tripType && (
-                    <div className="text-sm bg-blue-50 dark:bg-blue-950 p-3 rounded flex items-center justify-between group hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors border border-blue-200 dark:border-blue-800">
-                      <span className="font-medium">✈️ {tripType}</span>
-                      <button
-                        onClick={() => setTripType("")}
-                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                        title="Remove preference"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
+                  {/* Show message if no stored preferences */}
+                  {!(memoryPreferences && Object.values(memoryPreferences).some((cat: any) => cat?.length > 0)) && (
+                    <p className="text-xs text-muted-foreground italic py-2">No stored preferences yet. Save your preferences above to see them here.</p>
                   )}
                   
                   {/* All mem0 preferences combined */}
