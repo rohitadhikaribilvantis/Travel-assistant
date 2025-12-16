@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { AlertCircle, LogOut } from "lucide-react";
+import { AlertCircle, LogOut, ArrowLeft } from "lucide-react";
 
 export default function Profile() {
   const { user, logout, updateProfile, isLoading: authLoading } = useAuth();
@@ -68,14 +68,25 @@ export default function Profile() {
     .toUpperCase() || user.username[0].toUpperCase();
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-slate-950 dark:to-slate-900 p-4">
       <div className="max-w-2xl mx-auto space-y-6">
         {/* Header Card */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
-            <div>
-              <CardTitle className="text-2xl font-bold">My Profile</CardTitle>
-              <CardDescription>Manage your account settings</CardDescription>
+            <div className="flex items-center gap-4">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate("/")}
+                className="px-2"
+              >
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back
+              </Button>
+              <div>
+                <CardTitle className="text-2xl font-bold">My Profile</CardTitle>
+                <CardDescription>Manage your account settings</CardDescription>
+              </div>
             </div>
             <Button variant="destructive" size="sm" onClick={handleLogout}>
               <LogOut className="w-4 h-4 mr-2" />
@@ -97,9 +108,9 @@ export default function Profile() {
                 <AvatarFallback>{initials}</AvatarFallback>
               </Avatar>
               <div>
-                <p className="text-sm font-medium text-gray-500">Account</p>
-                <p className="text-lg font-semibold">{user.username}</p>
-                <p className="text-sm text-gray-500">{user.email}</p>
+                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Account</p>
+                <p className="text-lg font-semibold text-gray-900 dark:text-white">{user.username}</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">{user.email}</p>
               </div>
             </div>
 
@@ -113,8 +124,8 @@ export default function Profile() {
                 )}
 
                 {success && (
-                  <Alert className="bg-green-50 border-green-200">
-                    <AlertDescription className="text-green-800">{success}</AlertDescription>
+                  <Alert className="bg-green-50 dark:bg-green-950 border-green-200 dark:border-green-800">
+                    <AlertDescription className="text-green-800 dark:text-green-300">{success}</AlertDescription>
                   </Alert>
                 )}
 
@@ -158,20 +169,20 @@ export default function Profile() {
           <CardContent>
             <div className="space-y-4">
               <div className="flex justify-between">
-                <span className="text-sm font-medium text-gray-600">Member Since</span>
-                <span className="text-sm text-gray-900">
+                <span className="text-sm font-medium text-gray-600 dark:text-gray-300">Member Since</span>
+                <span className="text-sm text-gray-900 dark:text-white">
                   {new Date(user.createdAt).toLocaleDateString()}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-sm font-medium text-gray-600">Last Updated</span>
-                <span className="text-sm text-gray-900">
+                <span className="text-sm font-medium text-gray-600 dark:text-gray-300">Last Updated</span>
+                <span className="text-sm text-gray-900 dark:text-white">
                   {new Date(user.updatedAt).toLocaleDateString()}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-sm font-medium text-gray-600">User ID</span>
-                <span className="text-sm text-gray-900 font-mono">{user.id.substring(0, 8)}...</span>
+                <span className="text-sm font-medium text-gray-600 dark:text-gray-300">User ID</span>
+                <span className="text-sm text-gray-900 dark:text-white font-mono">{user.id.substring(0, 8)}...</span>
               </div>
             </div>
           </CardContent>
