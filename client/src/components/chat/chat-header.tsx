@@ -20,21 +20,26 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 
 interface ChatHeaderProps {
   onPreferencesRefresh?: () => void;
+  externalRefreshTrigger?: number;
 }
 
-export function ChatHeader({ onPreferencesRefresh }: ChatHeaderProps) {
+export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0 }: ChatHeaderProps) {
   const { user, logout } = useAuth();
   const { token } = useAuth();
   const [, navigate] = useLocation();
   const { preferences, setPreferences } = usePreferences(user?.id);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
-  const { preferences: memoryPreferences, refreshPreferences, isLoadingPreferences, removePreference, isRemovingPreference } = useMemory(user?.id, refreshTrigger);
+  // Use externalRefreshTrigger if provided, otherwise use internal state
+  const effectiveRefreshTrigger = externalRefreshTrigger !== 0 ? externalRefreshTrigger : refreshTrigger;
+  const { preferences: memoryPreferences, refreshPreferences, isLoadingPreferences, removePreference, isRemovingPreference } = useMemory(user?.id, effectiveRefreshTrigger);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [directFlightsOnly, setDirectFlightsOnly] = useState(false);
   const [avoidRedEye, setAvoidRedEye] = useState(false);
   const [preferredTime, setPreferredTime] = useState<string>("");
-  const [cabinClass, setCabinClass] = useState<string>("Economy");
+  const [cabinClass, setCabinClass] = useState<string>("");
+  const [tripType, setTripType] = useState<string>("");
   const [isSavingCabinClass, setIsSavingCabinClass] = useState(false);
+  const [isSavingAllPreferences, setIsSavingAllPreferences] = useState(false);
 
   // Listen for preference refresh events
   useEffect(() => {
@@ -48,10 +53,32 @@ export function ChatHeader({ onPreferencesRefresh }: ChatHeaderProps) {
     refreshPreferences();
   };
 
-  const handleDirectFlightsToggle = async (checked: boolean) => {
-    setDirectFlightsOnly(checked);
+  const handleSaveAllPreferences = async () => {
+    setIsSavingAllPreferences(true);
     try {
-      if (checked) {
+      // Delete old preferences first
+      const oldPrefsToDelete = [
+        "Morning departures",
+        "Afternoon departures",
+        "Evening departures",
+        "I prefer Business class flights",
+        "I prefer Premium Economy class flights",
+        "I prefer First Class class flights",
+        "I prefer Economy class flights"
+      ];
+
+      for (const oldPref of oldPrefsToDelete) {
+        await fetch(`/api/memory/preferences/${encodeURIComponent(oldPref)}`, {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        }).catch(() => {});
+      }
+
+      // Save all current selections
+      if (directFlightsOnly) {
         await fetch("/api/memory/add-preference", {
           method: "POST",
           headers: {
@@ -64,26 +91,9 @@ export function ChatHeader({ onPreferencesRefresh }: ChatHeaderProps) {
             content: "Direct flights only",
           }),
         });
-      } else {
-        await fetch("/api/memory/preferences/Direct%20flights%20only", {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        });
       }
-      setRefreshTrigger(prev => prev + 1);
-      refreshPreferences();
-    } catch (error) {
-      console.error("Error saving direct flights preference:", error);
-    }
-  };
 
-  const handleAvoidRedEyeToggle = async (checked: boolean) => {
-    setAvoidRedEye(checked);
-    try {
-      if (checked) {
+      if (avoidRedEye) {
         await fetch("/api/memory/add-preference", {
           method: "POST",
           headers: {
@@ -96,27 +106,10 @@ export function ChatHeader({ onPreferencesRefresh }: ChatHeaderProps) {
             content: "Avoid red-eye flights",
           }),
         });
-      } else {
-        await fetch("/api/memory/preferences/Avoid%20red-eye%20flights", {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        });
       }
-      setRefreshTrigger(prev => prev + 1);
-      refreshPreferences();
-    } catch (error) {
-      console.error("Error saving red-eye preference:", error);
-    }
-  };
 
-  const handlePreferredTimeChange = async (value: string) => {
-    setPreferredTime(value);
-    try {
-      if (value) {
-        const timeText = `${value} departures`;
+      if (preferredTime) {
+        const timeText = `${preferredTime} departures`;
         await fetch("/api/memory/add-preference", {
           method: "POST",
           headers: {
@@ -129,42 +122,9 @@ export function ChatHeader({ onPreferencesRefresh }: ChatHeaderProps) {
             content: timeText,
           }),
         });
-      } else {
-        // Try to delete any existing time preferences
-        await fetch(`/api/memory/preferences/${encodeURIComponent("Morning departures")}`, {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        }).catch(() => {});
-        await fetch(`/api/memory/preferences/${encodeURIComponent("Afternoon departures")}`, {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        }).catch(() => {});
-        await fetch(`/api/memory/preferences/${encodeURIComponent("Evening departures")}`, {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        }).catch(() => {});
       }
-      setRefreshTrigger(prev => prev + 1);
-      refreshPreferences();
-    } catch (error) {
-      console.error("Error saving time preference:", error);
-    }
-  };
 
-  const handleCabinClassChange = async (value: string) => {
-    setCabinClass(value);
-    setIsSavingCabinClass(true);
-    try {
-      if (value && value !== "Economy") {
+      if (cabinClass) {
         await fetch("/api/memory/add-preference", {
           method: "POST",
           headers: {
@@ -174,40 +134,59 @@ export function ChatHeader({ onPreferencesRefresh }: ChatHeaderProps) {
           body: JSON.stringify({
             category: "preference",
             type: "cabin_class",
-            content: `I prefer ${value} class flights`,
+            content: `I prefer ${cabinClass} class flights`,
           }),
         });
-      } else if (value === "Economy") {
-        // Delete premium cabin preferences
-        await fetch(`/api/memory/preferences/${encodeURIComponent("I prefer Business class flights")}`, {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        }).catch(() => {});
-        await fetch(`/api/memory/preferences/${encodeURIComponent("I prefer Premium Economy class flights")}`, {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        }).catch(() => {});
-        await fetch(`/api/memory/preferences/${encodeURIComponent("I prefer First Class class flights")}`, {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        }).catch(() => {});
       }
+
+      if (tripType) {
+        await fetch("/api/memory/add-preference", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            category: "preference",
+            type: "trip_type",
+            content: `I prefer ${tripType} trips`,
+          }),
+        });
+      }
+
+      // Refresh preferences
       setRefreshTrigger(prev => prev + 1);
       refreshPreferences();
     } catch (error) {
-      console.error("Error saving cabin class preference:", error);
+      console.error("Error saving preferences:", error);
     } finally {
-      setIsSavingCabinClass(false);
+      setIsSavingAllPreferences(false);
     }
+  };
+
+  const handleDirectFlightsToggle = (checked: boolean) => {
+    // Just update local state - Save button will handle actual saving
+    setDirectFlightsOnly(checked);
+  };
+
+  const handleAvoidRedEyeToggle = (checked: boolean) => {
+    // Just update local state - Save button will handle actual saving
+    setAvoidRedEye(checked);
+  };
+
+  const handlePreferredTimeChange = (value: string) => {
+    // Just update local state - Save button will handle actual saving
+    setPreferredTime(value);
+  };
+
+  const handleCabinClassChange = (value: string) => {
+    // Just update local state - Save button will handle actual saving
+    setCabinClass(value);
+  };
+
+  const handleTripTypeChange = (value: string) => {
+    // Just update local state - Save button will handle actual saving
+    setTripType(value);
   };
 
   const handleRemovePreference = (preference: any) => {
@@ -297,17 +276,14 @@ export function ChatHeader({ onPreferencesRefresh }: ChatHeaderProps) {
                   <select
                     value={cabinClass}
                     onChange={(e) => handleCabinClassChange(e.target.value)}
-                    disabled={isSavingCabinClass}
-                    className="w-full px-3 py-2 border rounded-lg bg-background text-sm disabled:opacity-50"
+                    className="w-full px-3 py-2 border rounded-lg bg-background text-sm"
                   >
-                    <option>Economy</option>
-                    <option>Premium Economy</option>
-                    <option>Business</option>
-                    <option>First Class</option>
+                    <option value="">Select cabin class</option>
+                    <option value="Economy">Economy</option>
+                    <option value="Premium Economy">Premium Economy</option>
+                    <option value="Business">Business</option>
+                    <option value="First Class">First Class</option>
                   </select>
-                  {isSavingCabinClass && (
-                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                  )}
                 </div>
               </div>
 
@@ -328,280 +304,254 @@ export function ChatHeader({ onPreferencesRefresh }: ChatHeaderProps) {
                 </select>
               </div>
 
-              {/* Saved Preferences Section */}
-              {(directFlightsOnly || avoidRedEye || memoryPreferences && Object.values(memoryPreferences).some((cat: any) => cat?.length > 0)) && (
-                <div className="space-y-3 border-t pt-6">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-semibold flex items-center gap-2">
-                      💾 Saved Preferences
-                    </h3>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={handleRefreshPreferences}
-                      disabled={isLoadingPreferences}
-                      className="h-6 w-6 p-0"
-                      title="Refresh preferences"
-                    >
-                      <RefreshCw className={`h-3 w-3 ${isLoadingPreferences ? "animate-spin" : ""}`} />
-                    </Button>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    {/* Direct Flights Toggle Preference */}
-                    {directFlightsOnly && (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground mb-2">🛫 Flight Type</p>
-                        <div className="space-y-1">
-                          <div className="text-sm bg-primary/10 p-2 rounded flex items-center justify-between group hover:bg-primary/20 transition-colors">
-                            <span>Direct flights only</span>
-                            <button
-                              onClick={() => setDirectFlightsOnly(false)}
-                              className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                              title="Remove preference"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
+              {/* Trip Type Section */}
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  ✈️ Trip Type
+                </h3>
+                <select
+                  value={tripType}
+                  onChange={(e) => handleTripTypeChange(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg bg-background text-sm"
+                >
+                  <option value="">Select trip type</option>
+                  <option value="One-way">One-way</option>
+                  <option value="Round trip">Round trip</option>
+                </select>
+              </div>
 
-                    {/* Avoid Red-Eye Toggle Preference */}
-                    {avoidRedEye && (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground mb-2">🌙 Red-eye</p>
-                        <div className="space-y-1">
-                          <div className="text-sm bg-primary/10 p-2 rounded flex items-center justify-between group hover:bg-primary/20 transition-colors">
-                            <span>Avoid red-eye flights</span>
-                            <button
-                              onClick={() => setAvoidRedEye(false)}
-                              className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                              title="Remove preference"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
+              {/* Save All Preferences Button */}
+              <div className="border-t pt-4 mt-4">
+                <Button
+                  onClick={handleSaveAllPreferences}
+                  disabled={isSavingAllPreferences || (!directFlightsOnly && !avoidRedEye && !preferredTime && !cabinClass && !tripType)}
+                  className="w-full bg-primary hover:bg-primary/90"
+                >
+                  {isSavingAllPreferences ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      💾 Save All Preferences
+                    </>
+                  )}
+                </Button>
+                <p className="text-xs text-muted-foreground text-center mt-2">
+                  Click to save all selections to memory
+                </p>
+              </div>
 
-                    {/* Cabin Class Preference */}
-                    {cabinClass && cabinClass !== "Economy" && (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground mb-2">🪑 Cabin Class</p>
-                        <div className="space-y-1">
-                          <div className="text-sm bg-primary/10 p-2 rounded flex items-center justify-between group hover:bg-primary/20 transition-colors">
-                            <span>{cabinClass}</span>
-                            <button
-                              onClick={() => setCabinClass("Economy")}
-                              className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                              title="Remove preference"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Departure Time Preference */}
-                    {preferredTime && (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground mb-2">🕐 Departure Time</p>
-                        <div className="space-y-1">
-                          <div className="text-sm bg-primary/10 p-2 rounded flex items-center justify-between group hover:bg-primary/20 transition-colors">
-                            <span>{preferredTime} departures</span>
-                            <button
-                              onClick={() => setPreferredTime("")}
-                              className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                              title="Remove preference"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Seat Preferences */}
-                    {memoryPreferences?.seat && memoryPreferences.seat.length > 0 && (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground mb-2">💺 Seating</p>
-                        <div className="space-y-1">
-                          {memoryPreferences.seat.map((pref, i) => (
-                            <div key={i} className="text-sm bg-primary/10 p-2 rounded flex items-center justify-between group hover:bg-primary/20 transition-colors">
-                              <span>{typeof pref === "string" ? pref : pref.text || pref.memory}</span>
-                              <button
-                                onClick={() => handleRemovePreference(pref)}
-                                disabled={isRemovingPreference}
-                                className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                                title="Remove preference"
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Flight Type */}
-                    {memoryPreferences?.flight_type && memoryPreferences.flight_type.length > 0 && (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground mb-2">🛫 Flight Type</p>
-                        <div className="space-y-1">
-                          {memoryPreferences.flight_type.map((pref, i) => (
-                            <div key={i} className="text-sm bg-primary/10 p-2 rounded flex items-center justify-between group hover:bg-primary/20 transition-colors">
-                              <span>{typeof pref === "string" ? pref : pref.text || pref.memory}</span>
-                              <button
-                                onClick={() => handleRemovePreference(pref)}
-                                disabled={isRemovingPreference}
-                                className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                                title="Remove preference"
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Cabin Class */}
-                    {memoryPreferences?.cabin_class && memoryPreferences.cabin_class.length > 0 && (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground mb-2">🎫 Cabin Class</p>
-                        <div className="space-y-1">
-                          {memoryPreferences.cabin_class.map((pref, i) => (
-                            <div key={i} className="text-sm bg-primary/10 p-2 rounded flex items-center justify-between group hover:bg-primary/20 transition-colors">
-                              <span>{typeof pref === "string" ? pref : pref.text || pref.memory}</span>
-                              <button
-                                onClick={() => handleRemovePreference(pref)}
-                                disabled={isRemovingPreference}
-                                className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                                title="Remove preference"
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Departure Time */}
-                    {memoryPreferences?.departure_time && memoryPreferences.departure_time.length > 0 && (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground mb-2">🕐 Departure Time</p>
-                        <div className="space-y-1">
-                          {memoryPreferences.departure_time.map((pref, i) => (
-                            <div key={i} className="text-sm bg-primary/10 p-2 rounded flex items-center justify-between group hover:bg-primary/20 transition-colors">
-                              <span>{typeof pref === "string" ? pref : pref.text || pref.memory}</span>
-                              <button
-                                onClick={() => handleRemovePreference(pref)}
-                                disabled={isRemovingPreference}
-                                className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                                title="Remove preference"
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Red-eye preferences */}
-                    {memoryPreferences?.red_eye && memoryPreferences.red_eye.length > 0 && (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground mb-2">🌙 Red-eye</p>
-                        <div className="space-y-1">
-                          {memoryPreferences.red_eye.map((pref, i) => (
-                            <div key={i} className="text-sm bg-primary/10 p-2 rounded flex items-center justify-between group hover:bg-primary/20 transition-colors">
-                              <span>{typeof pref === "string" ? pref : pref.text || pref.memory}</span>
-                              <button
-                                onClick={() => handleRemovePreference(pref)}
-                                disabled={isRemovingPreference}
-                                className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                                title="Remove preference"
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Airline Preferences */}
-                    {memoryPreferences?.airline && memoryPreferences.airline.length > 0 && (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground mb-2">✈️ Airlines</p>
-                        <div className="space-y-1">
-                          {memoryPreferences.airline.map((pref, i) => (
-                            <div key={i} className="text-sm bg-primary/10 p-2 rounded flex items-center justify-between group hover:bg-primary/20 transition-colors">
-                              <span>{typeof pref === "string" ? pref : pref.text || pref.memory}</span>
-                              <button
-                                onClick={() => handleRemovePreference(pref)}
-                                disabled={isRemovingPreference}
-                                className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                                title="Remove preference"
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Baggage preferences */}
-                    {memoryPreferences?.baggage && memoryPreferences.baggage.length > 0 && (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground mb-2">🎒 Baggage</p>
-                        <div className="space-y-1">
-                          {memoryPreferences.baggage.map((pref, i) => (
-                            <div key={i} className="text-sm bg-primary/10 p-2 rounded flex items-center justify-between group hover:bg-primary/20 transition-colors">
-                              <span>{typeof pref === "string" ? pref : pref.text || pref.memory}</span>
-                              <button
-                                onClick={() => handleRemovePreference(pref)}
-                                disabled={isRemovingPreference}
-                                className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                                title="Remove preference"
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* General preferences */}
-                    {memoryPreferences?.general && memoryPreferences.general.length > 0 && (
-                      <div>
-                        <p className="text-xs font-medium text-muted-foreground mb-2">📋 Other</p>
-                        <div className="space-y-1">
-                          {memoryPreferences.general.map((pref, i) => (
-                            <div key={i} className="text-sm bg-primary/10 p-2 rounded flex items-center justify-between group hover:bg-primary/20 transition-colors">
-                              <span>{typeof pref === "string" ? pref : pref.text || pref.memory}</span>
-                              <button
-                                onClick={() => handleRemovePreference(pref)}
-                                disabled={isRemovingPreference}
-                                className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                                title="Remove preference"
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+              {/* Saved Preferences Section - Show ALL current selections */}
+              <div className="space-y-3 border-t pt-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    💾 Active Preferences
+                  </h3>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleRefreshPreferences}
+                    disabled={isLoadingPreferences}
+                    className="h-6 w-6 p-0"
+                    title="Refresh preferences"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${isLoadingPreferences ? "animate-spin" : ""}`} />
+                  </Button>
                 </div>
-              )}
+                
+                <div className="space-y-2">
+                  {/* Show message if no preferences */}
+                  {!(directFlightsOnly || avoidRedEye || cabinClass || preferredTime || tripType ||
+                    (memoryPreferences && Object.values(memoryPreferences).some((cat: any) => cat?.length > 0))) && (
+                    <p className="text-xs text-muted-foreground italic py-2">No preferences saved yet</p>
+                  )}
+                  
+                  {/* Direct Flights Toggle Preference */}
+                  {directFlightsOnly && (
+                    <div className="text-sm bg-blue-50 dark:bg-blue-950 p-3 rounded flex items-center justify-between group hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors border border-blue-200 dark:border-blue-800">
+                      <span className="font-medium">🛫 Direct flights only</span>
+                      <button
+                        onClick={() => setDirectFlightsOnly(false)}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Avoid Red-Eye Toggle Preference */}
+                  {avoidRedEye && (
+                    <div className="text-sm bg-blue-50 dark:bg-blue-950 p-3 rounded flex items-center justify-between group hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors border border-blue-200 dark:border-blue-800">
+                      <span className="font-medium">🌙 Avoid red-eye flights</span>
+                      <button
+                        onClick={() => setAvoidRedEye(false)}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Cabin Class Preference */}
+                  {cabinClass && cabinClass !== "Economy" && (
+                    <div className="text-sm bg-blue-50 dark:bg-blue-950 p-3 rounded flex items-center justify-between group hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors border border-blue-200 dark:border-blue-800">
+                      <span className="font-medium">🪑 {cabinClass}</span>
+                      <button
+                        onClick={() => setCabinClass("Economy")}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Departure Time Preference */}
+                  {preferredTime && (
+                    <div className="text-sm bg-blue-50 dark:bg-blue-950 p-3 rounded flex items-center justify-between group hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors border border-blue-200 dark:border-blue-800">
+                      <span className="font-medium">🕐 {preferredTime} departures</span>
+                      <button
+                        onClick={() => setPreferredTime("")}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Trip Type Preference */}
+                  {tripType && (
+                    <div className="text-sm bg-blue-50 dark:bg-blue-950 p-3 rounded flex items-center justify-between group hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors border border-blue-200 dark:border-blue-800">
+                      <span className="font-medium">✈️ {tripType}</span>
+                      <button
+                        onClick={() => setTripType("")}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                  
+                  {/* All mem0 preferences combined */}
+                  {memoryPreferences?.seat && memoryPreferences.seat.length > 0 && memoryPreferences.seat.map((pref, i) => (
+                    <div key={`seat-${i}`} className="text-sm bg-green-50 dark:bg-green-950 p-3 rounded flex items-center justify-between group hover:bg-green-100 dark:hover:bg-green-900 transition-colors border border-green-200 dark:border-green-800">
+                      <span>💺 {typeof pref === "string" ? pref : pref.text || pref.memory}</span>
+                      <button
+                        onClick={() => handleRemovePreference(pref)}
+                        disabled={isRemovingPreference}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  
+                  {memoryPreferences?.flight_type && memoryPreferences.flight_type.length > 0 && memoryPreferences.flight_type.map((pref, i) => (
+                    <div key={`flight-${i}`} className="text-sm bg-green-50 dark:bg-green-950 p-3 rounded flex items-center justify-between group hover:bg-green-100 dark:hover:bg-green-900 transition-colors border border-green-200 dark:border-green-800">
+                      <span>🛫 {typeof pref === "string" ? pref : pref.text || pref.memory}</span>
+                      <button
+                        onClick={() => handleRemovePreference(pref)}
+                        disabled={isRemovingPreference}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  
+                  {memoryPreferences?.cabin_class && memoryPreferences.cabin_class.length > 0 && memoryPreferences.cabin_class.map((pref, i) => (
+                    <div key={`cabin-${i}`} className="text-sm bg-green-50 dark:bg-green-950 p-3 rounded flex items-center justify-between group hover:bg-green-100 dark:hover:bg-green-900 transition-colors border border-green-200 dark:border-green-800">
+                      <span>🎫 {typeof pref === "string" ? pref : pref.text || pref.memory}</span>
+                      <button
+                        onClick={() => handleRemovePreference(pref)}
+                        disabled={isRemovingPreference}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  
+                  {memoryPreferences?.departure_time && memoryPreferences.departure_time.length > 0 && memoryPreferences.departure_time.map((pref, i) => (
+                    <div key={`time-${i}`} className="text-sm bg-green-50 dark:bg-green-950 p-3 rounded flex items-center justify-between group hover:bg-green-100 dark:hover:bg-green-900 transition-colors border border-green-200 dark:border-green-800">
+                      <span>🕐 {typeof pref === "string" ? pref : pref.text || pref.memory}</span>
+                      <button
+                        onClick={() => handleRemovePreference(pref)}
+                        disabled={isRemovingPreference}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  
+                  {memoryPreferences?.red_eye && memoryPreferences.red_eye.length > 0 && memoryPreferences.red_eye.map((pref, i) => (
+                    <div key={`red-${i}`} className="text-sm bg-green-50 dark:bg-green-950 p-3 rounded flex items-center justify-between group hover:bg-green-100 dark:hover:bg-green-900 transition-colors border border-green-200 dark:border-green-800">
+                      <span>🌙 {typeof pref === "string" ? pref : pref.text || pref.memory}</span>
+                      <button
+                        onClick={() => handleRemovePreference(pref)}
+                        disabled={isRemovingPreference}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  
+                  {memoryPreferences?.airline && memoryPreferences.airline.length > 0 && memoryPreferences.airline.map((pref, i) => (
+                    <div key={`airline-${i}`} className="text-sm bg-green-50 dark:bg-green-950 p-3 rounded flex items-center justify-between group hover:bg-green-100 dark:hover:bg-green-900 transition-colors border border-green-200 dark:border-green-800">
+                      <span>🏢 {typeof pref === "string" ? pref : pref.text || pref.memory}</span>
+                      <button
+                        onClick={() => handleRemovePreference(pref)}
+                        disabled={isRemovingPreference}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  
+                  {memoryPreferences?.baggage && memoryPreferences.baggage.length > 0 && memoryPreferences.baggage.map((pref, i) => (
+                    <div key={`bag-${i}`} className="text-sm bg-green-50 dark:bg-green-950 p-3 rounded flex items-center justify-between group hover:bg-green-100 dark:hover:bg-green-900 transition-colors border border-green-200 dark:border-green-800">
+                      <span>🎒 {typeof pref === "string" ? pref : pref.text || pref.memory}</span>
+                      <button
+                        onClick={() => handleRemovePreference(pref)}
+                        disabled={isRemovingPreference}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  
+                  {memoryPreferences?.general && memoryPreferences.general.length > 0 && memoryPreferences.general.map((pref, i) => (
+                    <div key={`gen-${i}`} className="text-sm bg-green-50 dark:bg-green-950 p-3 rounded flex items-center justify-between group hover:bg-green-100 dark:hover:bg-green-900 transition-colors border border-green-200 dark:border-green-800">
+                      <span>📌 {typeof pref === "string" ? pref : pref.text || pref.memory}</span>
+                      <button
+                        onClick={() => handleRemovePreference(pref)}
+                        disabled={isRemovingPreference}
+                        className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        title="Remove preference"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </SheetContent>
         </Sheet>
