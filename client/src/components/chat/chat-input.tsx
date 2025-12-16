@@ -3,12 +3,14 @@ import { Send, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { ChatMessage } from "@shared/schema";
+import type { CurrentPreferences } from "@/hooks/use-chat";
 
 interface ChatInputProps {
-  onSendMessage: (message: string) => void;
+  onSendMessage: (message: string, preferences?: CurrentPreferences) => void;
   isLoading?: boolean;
   disabled?: boolean;
   messages?: ChatMessage[];
+  currentPreferences?: CurrentPreferences;
 }
 
 const SUGGESTED_PROMPTS = [
@@ -27,7 +29,7 @@ const FILTER_SUGGESTIONS = [
   "Show me the fastest options",
 ];
 
-export function ChatInput({ onSendMessage, isLoading, disabled, messages }: ChatInputProps) {
+export function ChatInput({ onSendMessage, isLoading, disabled, messages, currentPreferences }: ChatInputProps) {
   const [message, setMessage] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -46,7 +48,7 @@ export function ChatInput({ onSendMessage, isLoading, disabled, messages }: Chat
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (message.trim() && !isLoading && !disabled) {
-      onSendMessage(message.trim());
+      onSendMessage(message.trim(), currentPreferences);
       setMessage("");
       if (textareaRef.current) {
         textareaRef.current.style.height = "auto";
@@ -63,7 +65,7 @@ export function ChatInput({ onSendMessage, isLoading, disabled, messages }: Chat
 
   const handleSuggestionClick = (prompt: string) => {
     if (!isLoading && !disabled) {
-      onSendMessage(prompt);
+      onSendMessage(prompt, currentPreferences);
     }
   };
 

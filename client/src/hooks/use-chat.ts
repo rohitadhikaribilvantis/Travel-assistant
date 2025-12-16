@@ -4,13 +4,21 @@ import { apiRequest } from "@/lib/queryClient";
 import type { ChatMessage, ChatResponse } from "@shared/schema";
 import { useAuth } from "./use-auth";
 
+export interface CurrentPreferences {
+  directFlightsOnly?: boolean;
+  avoidRedEye?: boolean;
+  cabinClass?: string;
+  preferredTime?: string;
+  tripType?: string;
+}
+
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | undefined>();
   const { token, user } = useAuth();
 
   const sendMessageMutation = useMutation({
-    mutationFn: async (message: string): Promise<any> => {
+    mutationFn: async ({ message, preferences }: { message: string; preferences?: CurrentPreferences }): Promise<any> => {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
@@ -20,6 +28,7 @@ export function useChat() {
         body: JSON.stringify({
           message,
           conversationId,
+          currentPreferences: preferences,
         }),
       });
 
@@ -89,7 +98,7 @@ export function useChat() {
   });
 
   const sendMessage = useCallback(
-    (content: string) => {
+    (content: string, preferences?: CurrentPreferences) => {
       const userMessage: ChatMessage = {
         id: `user-${Date.now()}`,
         role: "user",
@@ -97,7 +106,7 @@ export function useChat() {
         timestamp: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, userMessage]);
-      sendMessageMutation.mutate(content);
+      sendMessageMutation.mutate({ message: content, preferences });
     },
     [sendMessageMutation]
   );
@@ -117,7 +126,11 @@ export function useChat() {
         if (response.ok) {
           const data = await response.json();
           setConversationId(convId);
-          setMessages(data.messages || []);
+          // Sort messages by timestamp (oldest first)
+          const sortedMessages = (data.messages || []).sort((a: ChatMessage, b: ChatMessage) => 
+            new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+          );
+          setMessages(sortedMessages);
         }
       } catch (error) {
         console.error("Failed to load conversation:", error);

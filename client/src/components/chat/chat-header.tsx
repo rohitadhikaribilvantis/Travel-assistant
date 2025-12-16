@@ -18,12 +18,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 
+import type { CurrentPreferences } from "@/hooks/use-chat";
+
 interface ChatHeaderProps {
   onPreferencesRefresh?: () => void;
   externalRefreshTrigger?: number;
+  onPreferencesChange?: (preferences: CurrentPreferences) => void;
 }
 
-export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0 }: ChatHeaderProps) {
+export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, onPreferencesChange }: ChatHeaderProps) {
   const { user, logout } = useAuth();
   const { token } = useAuth();
   const [, navigate] = useLocation();
@@ -48,6 +51,19 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0 }:
     }
   }, []);
 
+  // Notify parent when preferences change
+  useEffect(() => {
+    if (onPreferencesChange) {
+      onPreferencesChange({
+        directFlightsOnly,
+        avoidRedEye,
+        cabinClass,
+        preferredTime,
+        tripType,
+      });
+    }
+  }, [directFlightsOnly, avoidRedEye, cabinClass, preferredTime, tripType, onPreferencesChange]);
+
   const handleRefreshPreferences = () => {
     setRefreshTrigger(prev => prev + 1);
     refreshPreferences();
@@ -56,7 +72,7 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0 }:
   const handleSaveAllPreferences = async () => {
     setIsSavingAllPreferences(true);
     try {
-      // Delete old preferences first
+      // Delete old preferences in parallel
       const oldPrefsToDelete = [
         "Morning departures",
         "Afternoon departures",
@@ -67,92 +83,109 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0 }:
         "I prefer Economy class flights"
       ];
 
-      for (const oldPref of oldPrefsToDelete) {
-        await fetch(`/api/memory/preferences/${encodeURIComponent(oldPref)}`, {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        }).catch(() => {});
-      }
+      await Promise.all(
+        oldPrefsToDelete.map(oldPref =>
+          fetch(`/api/memory/preferences/${encodeURIComponent(oldPref)}`, {
+            method: "DELETE",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+          }).catch(() => {})
+        )
+      );
 
-      // Save all current selections
+      // Build array of preferences to save
+      const prefsToSave = [];
+
       if (directFlightsOnly) {
-        await fetch("/api/memory/add-preference", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            category: "preference",
-            type: "flight_type",
-            content: "Direct flights only",
-          }),
-        });
+        prefsToSave.push(
+          fetch("/api/memory/add-preference", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              category: "preference",
+              type: "flight_type",
+              content: "Direct flights only",
+            }),
+          })
+        );
       }
 
       if (avoidRedEye) {
-        await fetch("/api/memory/add-preference", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            category: "preference",
-            type: "red_eye",
-            content: "Avoid red-eye flights",
-          }),
-        });
+        prefsToSave.push(
+          fetch("/api/memory/add-preference", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              category: "preference",
+              type: "red_eye",
+              content: "Avoid red-eye flights",
+            }),
+          })
+        );
       }
 
       if (preferredTime) {
         const timeText = `${preferredTime} departures`;
-        await fetch("/api/memory/add-preference", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            category: "preference",
-            type: "departure_time",
-            content: timeText,
-          }),
-        });
+        prefsToSave.push(
+          fetch("/api/memory/add-preference", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              category: "preference",
+              type: "departure_time",
+              content: timeText,
+            }),
+          })
+        );
       }
 
       if (cabinClass) {
-        await fetch("/api/memory/add-preference", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            category: "preference",
-            type: "cabin_class",
-            content: `I prefer ${cabinClass} class flights`,
-          }),
-        });
+        prefsToSave.push(
+          fetch("/api/memory/add-preference", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              category: "preference",
+              type: "cabin_class",
+              content: `I prefer ${cabinClass} class flights`,
+            }),
+          })
+        );
       }
 
       if (tripType) {
-        await fetch("/api/memory/add-preference", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            category: "preference",
-            type: "trip_type",
-            content: `I prefer ${tripType} trips`,
-          }),
-        });
+        prefsToSave.push(
+          fetch("/api/memory/add-preference", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              category: "preference",
+              type: "trip_type",
+              content: `I prefer ${tripType} trips`,
+            }),
+          })
+        );
       }
+
+      // Save all preferences in parallel
+      await Promise.all(prefsToSave);
 
       // Refresh preferences
       setRefreshTrigger(prev => prev + 1);

@@ -90,6 +90,7 @@ class ChatRequest(BaseModel):
     message: str
     conversationId: Optional[str] = None
     userId: Optional[str] = None
+    currentPreferences: Optional[dict] = None
 
 class ChatResponse(BaseModel):
     message: ChatMessageModel
@@ -103,6 +104,9 @@ class ConversationModel(BaseModel):
     archived: bool
     createdAt: str
     updatedAt: str
+
+class DeleteAllConversationsRequest(BaseModel):
+    deletePreferences: bool = False
 
 # ==================== Authentication Functions ====================
 def hash_password(password: str) -> str:
@@ -368,6 +372,8 @@ async def chat(request: ChatRequest, current_user: dict = Depends(get_current_us
             user_message=request.message,
             user_id=user_id,
             conversation_history=conversation_history,
+            current_preferences=request.currentPreferences or {},
+            username=current_user.get("username"),
         )
 
         # Extract preferences from the conversation
@@ -478,6 +484,62 @@ async def delete_conversation(conversation_id: str, current_user: dict = Depends
     storage.delete_conversation(conversation_id)
     return {"message": "Conversation deleted"}
 
+@app.delete("/api/conversations")
+async def delete_all_conversations(request_body: DeleteAllConversationsRequest, current_user: dict = Depends(get_current_user)):
+    """Delete all conversations for the current user and optionally their preferences."""
+    from memory_manager import memory_manager
+    try:
+        user_id = current_user["id"]
+        delete_preferences = request_body.deletePreferences
+        
+        print(f"\n[DELETE ALL] Starting deletion for user {user_id}")
+        print(f"[DELETE ALL] deletePreferences flag: {delete_preferences}")
+        
+        # Get all conversations for this user
+        conversations = storage.get_user_conversations(user_id)
+        print(f"[DELETE ALL] Found {len(conversations)} conversations to delete")
+        
+        # Delete each conversation
+        deleted_count = 0
+        for conv in conversations:
+            conv_id = conv.get("id") if isinstance(conv, dict) else conv.id
+            print(f"[DELETE ALL] Deleting conversation {conv_id}")
+            result = storage.delete_conversation(conv_id)
+            if result:
+                deleted_count += 1
+            else:
+                print(f"[DELETE ALL] Failed to delete conversation {conv_id}")
+        
+        print(f"[DELETE ALL] Successfully deleted {deleted_count} conversations")
+        
+        # Optionally delete all preferences
+        if delete_preferences:
+            try:
+                print(f"[DELETE ALL] Clearing all preferences for user {user_id}")
+                result = memory_manager.clear_all_preferences(user_id)
+                print(f"[DELETE ALL] Clear preferences result: {result}")
+            except Exception as e:
+                print(f"[CLEANUP ERROR] Error deleting preferences for user {user_id}: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        response_msg = f"Deleted {deleted_count} conversations"
+        if delete_preferences:
+            response_msg += " and all preferences"
+        
+        print(f"[DELETE ALL] Completed: {response_msg}\n")
+        
+        return {
+            "success": True,
+            "message": response_msg,
+            "deleted_count": deleted_count
+        }
+    except Exception as e:
+        print(f"[DELETE ALL ERROR] {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error deleting conversations: {str(e)}")
+
 # ==================== Memory/Preferences API ====================
 @app.get("/api/memory/preferences")
 async def get_user_preferences(current_user: dict = Depends(get_current_user)):
@@ -540,19 +602,27 @@ async def delete_preference(preference_text: str, current_user: dict = Depends(g
     """Delete a user's preference by text."""
     from memory_manager import memory_manager
     try:
+        print(f"[DELETE PREF] Attempting to delete preference: '{preference_text}' for user {current_user['id']}")
         result = memory_manager.remove_preference(current_user["id"], preference_text)
         
         if "error" in result:
+            print(f"[DELETE PREF] Error: {result.get('error')}")
             raise HTTPException(status_code=404, detail=result.get("error", "Preference not found"))
         
-        return {
-            "success": True,
-            "message": f"Preference removed successfully",
-            "deletedPreference": preference_text
-        }
+        if result.get("success"):
+            print(f"[DELETE PREF] Successfully deleted preference: {result.get('deleted_text')}")
+            return {
+                "success": True,
+                "message": f"Preference removed successfully",
+                "deletedPreference": preference_text,
+                "deletedId": result.get("deleted_id")
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to delete preference")
     except HTTPException:
         raise
     except Exception as e:
+        print(f"[DELETE PREF] Exception: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error deleting preference: {str(e)}")
 
 @app.get("/api/memory/travel-history")

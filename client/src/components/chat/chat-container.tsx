@@ -5,6 +5,7 @@ import { EmptyState } from "./empty-state";
 import { LoadingSkeleton } from "./loading-skeleton";
 import { FlightFilter } from "./flight-filter";
 import { JourneySummary } from "./journey-summary";
+import { useAuth } from "@/hooks/use-auth";
 import type { ChatMessage, FlightOffer } from "@shared/schema";
 
 interface ChatContainerProps {
@@ -13,6 +14,7 @@ interface ChatContainerProps {
 }
 
 export function ChatContainer({ messages, isLoading }: ChatContainerProps) {
+  const { user } = useAuth();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [showFilter, setShowFilter] = useState(false);
@@ -65,6 +67,7 @@ export function ChatContainer({ messages, isLoading }: ChatContainerProps) {
             <MessageBubble 
               key={message.id} 
               message={message}
+              userAvatar={user?.avatar}
               onShowFilter={() => {
                 setCurrentFlights(message.flightResults || null);
                 setShowFilter(true);

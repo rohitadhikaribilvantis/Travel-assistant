@@ -130,8 +130,7 @@ class DatabaseStorage:
                     "email": user.email,
                     "username": user.username,
                     "fullName": user.fullName,
-                    "avatar": user.avatar,
-                    "passwordHash": user.passwordHash,
+                    "avatar": user.avatar,                    "botAvatar": user.botAvatar,                    "passwordHash": user.passwordHash,
                     "createdAt": user.createdAt,
                     "updatedAt": user.updatedAt,
                 }
@@ -171,6 +170,8 @@ class DatabaseStorage:
                 user.fullName = updates.fullName
             if updates.avatar is not None:
                 user.avatar = updates.avatar
+            if updates.botAvatar is not None:
+                user.botAvatar = updates.botAvatar
             
             user.updatedAt = datetime.now().isoformat()
             db.commit()
@@ -181,8 +182,7 @@ class DatabaseStorage:
                 "email": user.email,
                 "username": user.username,
                 "fullName": user.fullName,
-                "avatar": user.avatar,
-                "passwordHash": user.passwordHash,
+                "avatar": user.avatar,                "botAvatar": user.botAvatar,                "passwordHash": user.passwordHash,
                 "createdAt": user.createdAt,
                 "updatedAt": user.updatedAt,
             }

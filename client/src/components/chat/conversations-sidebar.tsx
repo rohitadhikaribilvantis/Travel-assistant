@@ -2,12 +2,23 @@ import { useState } from "react";
 import { Trash2, MoreVertical, Plus, Edit2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 
 interface Conversation {
   id: string;
@@ -24,6 +35,7 @@ interface ConversationsSidebarProps {
   onNewConversation: () => void;
   onRenameConversation: (id: string, title: string) => void;
   onDeleteConversation: (id: string) => void;
+  onDeleteAllConversations?: (deletePreferences: boolean) => void;
 }
 
 export function ConversationsSidebar({
@@ -33,9 +45,13 @@ export function ConversationsSidebar({
   onNewConversation,
   onRenameConversation,
   onDeleteConversation,
+  onDeleteAllConversations,
 }: ConversationsSidebarProps) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
+  const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [deletePreferencesToo, setDeletePreferencesToo] = useState(false);
 
   const handleRename = (id: string, currentTitle: string) => {
     setRenamingId(id);
@@ -56,14 +72,24 @@ export function ConversationsSidebar({
   return (
     <div className="w-full bg-slate-900 text-white flex flex-col h-screen border-r border-slate-700">
       {/* Header */}
-      <div className="p-4 border-b border-slate-700">
-        <Button
-          onClick={onNewConversation}
-          className="w-full bg-slate-700 hover:bg-slate-600"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          New Chat
-        </Button>
+      <div className="p-4 border-b border-slate-700 space-y-2">
+        <div className="flex gap-2">
+          <Button
+            onClick={onNewConversation}
+            className="flex-1 bg-slate-700 hover:bg-slate-600"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            New Chat
+          </Button>
+          <Button
+            onClick={() => setShowDeleteAllDialog(true)}
+            variant="ghost"
+            className="px-3 hover:bg-slate-700 hover:text-red-400"
+            title="Delete all chats"
+          >
+            <Trash2 className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Conversations List */}
@@ -152,6 +178,78 @@ export function ConversationsSidebar({
         )}
       </div>
 
+      {/* Delete All Dialog - Step 1: Choose preferences option */}
+      <AlertDialog open={showDeleteAllDialog && !showConfirmDialog} onOpenChange={setShowDeleteAllDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete All Chats</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete all your chat conversations? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          
+          <div className="py-4 space-y-3">
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="delete-prefs"
+                checked={deletePreferencesToo}
+                onCheckedChange={(checked) => setDeletePreferencesToo(checked as boolean)}
+              />
+              <Label htmlFor="delete-prefs" className="font-normal text-sm cursor-pointer">
+                Also delete all my travel preferences?
+              </Label>
+            </div>
+          </div>
+
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-red-600 hover:bg-red-700"
+            onClick={() => {
+              setShowConfirmDialog(true);
+            }}
+          >
+            Continue
+          </AlertDialogAction>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete All Dialog - Step 2: Final confirmation */}
+      <AlertDialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <p>This will permanently delete:</p>
+              <ul className="list-disc list-inside space-y-1 ml-2">
+                <li>All chat conversations</li>
+                {deletePreferencesToo && <li>All travel preferences</li>}
+              </ul>
+              <p className="font-semibold text-red-500 mt-3">This action cannot be undone!</p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-red-600 hover:bg-red-700"
+            onClick={() => {
+              console.log("🗑️ [SIDEBAR] Delete Everything clicked!");
+              console.log("🗑️ [SIDEBAR] deletePreferencesToo:", deletePreferencesToo);
+              console.log("🗑️ [SIDEBAR] onDeleteAllConversations:", typeof onDeleteAllConversations);
+              if (onDeleteAllConversations) {
+                console.log("🗑️ [SIDEBAR] Calling onDeleteAllConversations...");
+                onDeleteAllConversations(deletePreferencesToo);
+              } else {
+                console.error("❌ [SIDEBAR] onDeleteAllConversations is not defined!");
+              }
+              setShowConfirmDialog(false);
+              setShowDeleteAllDialog(false);
+              setDeletePreferencesToo(false);
+            }}
+          >
+            Delete Everything
+          </AlertDialogAction>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

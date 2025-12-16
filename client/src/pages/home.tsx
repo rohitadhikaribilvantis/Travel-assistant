@@ -3,7 +3,7 @@ import { ChatHeader } from "@/components/chat/chat-header";
 import { ChatContainer } from "@/components/chat/chat-container";
 import { ChatInput } from "@/components/chat/chat-input";
 import { ConversationsSidebar } from "@/components/chat/conversations-sidebar";
-import { useChat } from "@/hooks/use-chat";
+import { useChat, type CurrentPreferences } from "@/hooks/use-chat";
 import { useAuth } from "@/hooks/use-auth";
 
 interface Conversation {
@@ -33,6 +33,7 @@ export default function Home() {
   const [titleSavedForConv, setTitleSavedForConv] = useState<string | null>(null);
   const [isLoadingConversation, setIsLoadingConversation] = useState(false);
   const [preferencesRefreshTrigger, setPreferencesRefreshTrigger] = useState(0);
+  const [currentPreferences, setCurrentPreferences] = useState<CurrentPreferences>({});
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Trigger preference refresh after each message
@@ -236,6 +237,47 @@ export default function Home() {
     }
   };
 
+  const handleDeleteAllConversations = async (deletePreferences: boolean) => {
+    if (!token) return;
+    try {
+      console.log("🗑️ [DELETE ALL] Starting deletion...");
+      console.log(`🗑️ [DELETE ALL] deletePreferences: ${deletePreferences}`);
+      
+      // Delete all conversations
+      const response = await fetch("/api/conversations", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ deletePreferences }),
+      });
+
+      console.log(`🗑️ [DELETE ALL] Response status: ${response.status}`);
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log(`✅ [DELETE ALL] ${result.message}`);
+        
+        // Clear local state
+        setConversations([]);
+        handleNewConversation();
+        
+        // Auto-refresh conversations list
+        console.log("🔄 [DELETE ALL] Refreshing conversations list...");
+        setTimeout(() => {
+          fetchConversations();
+        }, 500);
+      } else {
+        const errorText = await response.text();
+        console.error(`❌ [DELETE ALL] Failed: ${response.statusText}`);
+        console.error(`❌ [DELETE ALL] Error details: ${errorText}`);
+      }
+    } catch (error) {
+      console.error("❌ [DELETE ALL] Exception:", error);
+    }
+  };
+
   // Handle resize
   useEffect(() => {
     if (!isResizing) return;
@@ -276,6 +318,7 @@ export default function Home() {
           onNewConversation={handleNewConversation}
           onRenameConversation={handleRenameConversation}
           onDeleteConversation={handleDeleteConversation}
+          onDeleteAllConversations={handleDeleteAllConversations}
         />
       </div>
 
@@ -288,9 +331,13 @@ export default function Home() {
       />
 
       <div className="flex flex-1 flex-col">
-        <ChatHeader onPreferencesRefresh={() => setPreferencesRefreshTrigger(prev => prev + 1)} />
+        <ChatHeader 
+          onPreferencesRefresh={() => setPreferencesRefreshTrigger(prev => prev + 1)}
+          externalRefreshTrigger={preferencesRefreshTrigger}
+          onPreferencesChange={setCurrentPreferences}
+        />
         <ChatContainer messages={messages} isLoading={isLoading} />
-        <ChatInput onSendMessage={sendMessage} isLoading={isLoading} messages={messages} />
+        <ChatInput onSendMessage={sendMessage} isLoading={isLoading} messages={messages} currentPreferences={currentPreferences} />
       </div>
     </div>
   );

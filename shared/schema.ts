@@ -26,6 +26,16 @@ export interface ChatResponse {
   appliedPrefs?: string;
 }
 
+export interface User {
+  id: string;
+  email: string;
+  username: string;
+  fullName?: string;
+  avatar?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Conversation {
   id: string;
   userId: string;

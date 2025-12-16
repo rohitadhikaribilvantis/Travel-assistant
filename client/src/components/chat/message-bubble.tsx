@@ -1,6 +1,7 @@
-import { Bot, User, Sliders } from "lucide-react";
+import { User, Bot, Sliders } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import type { ChatMessage } from "@shared/schema";
 import { FlightCard } from "./flight-card";
 import { Badge } from "@/components/ui/badge";
@@ -8,10 +9,11 @@ import { Button } from "@/components/ui/button";
 
 interface MessageBubbleProps {
   message: ChatMessage;
+  userAvatar?: string;
   onShowFilter?: () => void;
 }
 
-export function MessageBubble({ message, onShowFilter }: MessageBubbleProps) {
+export function MessageBubble({ message, userAvatar, onShowFilter }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
   const hasFlights = message.flightResults && message.flightResults.length > 0;
@@ -30,8 +32,25 @@ export function MessageBubble({ message, onShowFilter }: MessageBubbleProps) {
       data-testid={`message-${message.role}-${message.id}`}
     >
       {isAssistant && (
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10">
-          <Bot className="h-4 w-4 text-primary" />
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-200">
+          <Bot className="h-4 w-4 text-slate-600" />
+        </div>
+      )}
+
+      {isUser && userAvatar && (
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full overflow-hidden order-2">
+          <Avatar className="h-8 w-8">
+            <AvatarImage src={userAvatar} alt="User avatar" />
+            <AvatarFallback>
+              <User className="h-4 w-4" />
+            </AvatarFallback>
+          </Avatar>
+        </div>
+      )}
+
+      {isUser && !userAvatar && (
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 order-2">
+          <User className="h-4 w-4 text-blue-600" />
         </div>
       )}
 
@@ -105,12 +124,6 @@ export function MessageBubble({ message, onShowFilter }: MessageBubbleProps) {
           {formatTimestamp(message.timestamp)}
         </span>
       </div>
-
-      {isUser && (
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secondary">
-          <User className="h-4 w-4 text-secondary-foreground" />
-        </div>
-      )}
     </div>
   );
 }

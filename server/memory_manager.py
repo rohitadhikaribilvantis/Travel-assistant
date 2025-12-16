@@ -57,10 +57,9 @@ class TravelMemoryManager:
         """Lazy initialization of mem0 to avoid startup delays."""
         if not self._initialized:
             try:
-                from mem0 import Memory
+                from mem0 import MemoryClient
                 
                 mem0_api_key = os.environ.get("MEM0_API_KEY")
-                openai_api_key = os.environ.get("OPENAI_API_KEY")
                 
                 if not mem0_api_key:
                     print("Warning: MEM0_API_KEY not set in environment")
@@ -68,18 +67,7 @@ class TravelMemoryManager:
                     self._initialized = True
                     return None
                 
-                self._memory = Memory(
-                    api_key=mem0_api_key,
-                    config={
-                        "llm": {
-                            "provider": "openai",
-                            "config": {
-                                "model": "gpt-4o",
-                                "api_key": openai_api_key
-                            }
-                        }
-                    }
-                )
+                self._memory = MemoryClient(api_key=mem0_api_key)
                 self._initialized = True
             except Exception as e:
                 print(f"Warning: Could not initialize mem0: {e}")
@@ -104,16 +92,29 @@ class TravelMemoryManager:
             return []
         
         try:
+            # MemoryClient requires filters parameter with user_id
+            filters = {"user_id": user_id}
+            
             if query:
                 print(f"[MEMORY] Searching for '{query}' for user {user_id}")
-                results = memory.search(query, user_id=user_id)
-                memories = results.get("results", []) if isinstance(results, dict) else results
+                results = memory.search(query, filters=filters)
             else:
-                print(f"[MEMORY] Getting all memories for user {user_id}")
-                all_memories = memory.get_all(user_id=user_id)
-                memories = all_memories.get("results", []) if isinstance(all_memories, dict) else (all_memories if isinstance(all_memories, list) else [])
+                # If no query, search for generic terms to get all preferences
+                print(f"[MEMORY] Getting all memories for user {user_id} via search")
+                search_query = "preference flight cabin class time depart airline seat travel"
+                results = memory.search(search_query, filters=filters)
             
-            print(f"[MEMORY] Retrieved {len(memories)} memories for user {user_id}: {memories}")
+            print(f"[MEMORY] Search results: {results}")
+            
+            # MemoryClient.search() returns {"results": [memory_list]}
+            if isinstance(results, dict):
+                memories = results.get("results", [])
+            else:
+                memories = results if isinstance(results, list) else []
+            
+            print(f"[MEMORY] Retrieved {len(memories)} memories for user {user_id}")
+            if memories:
+                print(f"[MEMORY] Sample memory structure: {memories[0] if memories else 'None'}")
             return memories
         except Exception as e:
             print(f"[MEMORY ERROR] Error retrieving memories for user {user_id}: {e}")
@@ -142,7 +143,8 @@ class TravelMemoryManager:
             print(f"[MEMORY] Messages: {messages}")
             result = memory.add(messages, user_id=user_id)
             print(f"[MEMORY] Successfully added memory, result: {result}")
-            return result
+            print(f"[MEMORY] Result type: {type(result)}, Keys: {result.keys() if isinstance(result, dict) else 'N/A'}")
+            return {"success": True, "result": result}
         except Exception as e:
             print(f"[MEMORY ERROR] Error adding memory for user {user_id}: {e}")
             import traceback
@@ -158,12 +160,15 @@ class TravelMemoryManager:
             preference_type: Type of preference (seat, airline, time, flight_type, cabin_class, etc.)
             preference_value: The preference value
         """
+        print(f"[MEMORY] Storing preference for user {user_id}: type={preference_type}, value={preference_value}")
         message = f"Preference: {preference_type} - {preference_value}"
         messages = [
             {"role": "user", "content": message},
             {"role": "assistant", "content": f"I've noted that you prefer {preference_value} for {preference_type}."}
         ]
-        return self.add_memory(user_id, messages)
+        result = self.add_memory(user_id, messages)
+        print(f"[MEMORY] Store preference result: {result}")
+        return result
     
     def store_travel_history(self, user_id: str, flight_details: Dict):
         """
@@ -355,6 +360,7 @@ class TravelMemoryManager:
         """
         try:
             all_memories = self.get_user_memories(user_id)
+            print(f"[MEMORY] Raw memories retrieved: {all_memories}")
             
             summary = {
                 "seat_preferences": [],
@@ -362,6 +368,9 @@ class TravelMemoryManager:
                 "time_preferences": [],
                 "flight_type_preferences": [],
                 "cabin_class_preferences": [],
+                "red_eye_preferences": [],
+                "trip_type_preferences": [],
+                "passenger_preferences": [],
                 "routes": [],
                 "budget_info": [],
                 "other_preferences": []
@@ -381,28 +390,50 @@ class TravelMemoryManager:
                 else:
                     entry = memory_text
                 
-                # Categorize the memory
-                if any(word in memory_lower for word in ["seat", "window", "aisle", "middle", "exit row"]):
-                    summary["seat_preferences"].append(entry)
-                elif any(word in memory_lower for word in ["airline", "carrier", "united", "delta", "american"]):
-                    summary["airline_preferences"].append(entry)
-                elif any(word in memory_lower for word in ["morning", "evening", "afternoon", "time", "depart", "red-eye"]):
-                    summary["time_preferences"].append(entry)
-                elif any(word in memory_lower for word in ["direct", "non-stop", "layover", "stop"]):
-                    summary["flight_type_preferences"].append(entry)
-                elif any(word in memory_lower for word in ["business", "economy", "premium", "first class", "cabin"]):
+                print(f"[MEMORY] Processing memory: '{memory_text}' (lower: '{memory_lower}')")
+                
+                # Categorize the memory - Check cabin class FIRST since it's most specific
+                if any(word in memory_lower for word in ["business class", "economy class", "premium economy", "first class", "i prefer"]) and any(word in memory_lower for word in ["class", "cabin"]):
+                    print(f"  -> Categorized as CABIN CLASS")
                     summary["cabin_class_preferences"].append(entry)
+                elif any(word in memory_lower for word in ["red-eye", "red eye"]):
+                    print(f"  -> Categorized as RED EYE")
+                    summary["red_eye_preferences"].append(entry)
+                elif any(word in memory_lower for word in ["round trip", "one-way", "round-trip", "one way"]):
+                    print(f"  -> Categorized as TRIP TYPE")
+                    summary["trip_type_preferences"].append(entry)
+                elif any(word in memory_lower for word in ["direct", "non-stop", "layover", "stop"]):
+                    print(f"  -> Categorized as FLIGHT TYPE")
+                    summary["flight_type_preferences"].append(entry)
+                elif any(word in memory_lower for word in ["morning", "afternoon", "evening", "depart"]):
+                    print(f"  -> Categorized as TIME")
+                    summary["time_preferences"].append(entry)
+                elif any(word in memory_lower for word in ["traveling alone", "solo", "travel alone", "fly alone", "traveling with family", "traveling with kids", "traveling with children", "traveling with partner", "traveling with spouse", "family trip"]):
+                    print(f"  -> Categorized as PASSENGER")
+                    summary["passenger_preferences"].append(entry)
+                elif any(word in memory_lower for word in ["seat", "window", "aisle", "middle", "exit row"]):
+                    print(f"  -> Categorized as SEAT")
+                    summary["seat_preferences"].append(entry)
+                elif any(word in memory_lower for word in ["airline", "carrier", "united", "delta", "american", "southwest", "jetblue"]):
+                    print(f"  -> Categorized as AIRLINE")
+                    summary["airline_preferences"].append(entry)
                 elif any(word in memory_lower for word in ["budget", "price", "cost", "cheap", "expensive"]):
+                    print(f"  -> Categorized as BUDGET")
                     summary["budget_info"].append(entry)
                 elif any(word in memory_lower for word in ["route", "traveled", "booked", "flight"]):
+                    print(f"  -> Categorized as ROUTE")
                     summary["routes"].append(entry)
                 else:
+                    print(f"  -> Categorized as OTHER")
                     summary["other_preferences"].append(entry)
             
+            print(f"[MEMORY] Final summary: {summary}")
             # Remove empty categories
             return {k: v for k, v in summary.items() if v}
         except Exception as e:
             print(f"Error summarizing preferences: {e}")
+            import traceback
+            traceback.print_exc()
             return {}
     
     def delete_memory(self, user_id: str, memory_id: str) -> Dict:
@@ -423,17 +454,72 @@ class TravelMemoryManager:
         
         try:
             print(f"[MEMORY] Deleting memory {memory_id} for user {user_id}")
-            # mem0 doesn't have a direct delete by ID, so we'll search and identify
-            # For now, we'll store this as a soft delete indicator
-            # In practice, you'd need to use mem0's API more directly
-            result = memory.delete(memory_id, user_id=user_id) if hasattr(memory, 'delete') else {"error": "Delete not supported"}
+            # mem0's MemoryClient.delete() method only takes memory_id
+            result = memory.delete(memory_id)
             print(f"[MEMORY] Delete result: {result}")
-            return result
+            return {"success": True, "result": result}
         except Exception as e:
             print(f"[MEMORY ERROR] Error deleting memory {memory_id} for user {user_id}: {e}")
             import traceback
             traceback.print_exc()
             return {"error": str(e)}
+    
+    def clear_all_preferences(self, user_id: str) -> Dict:
+        """
+        Clear all preferences for a user using delete_all() with user_id filter.
+        Falls back to individual deletion if needed.
+        
+        Args:
+            user_id: The user identifier
+            
+        Returns:
+            Result with count of deleted preferences
+        """
+        print(f"[MEMORY] Clearing all preferences for user {user_id}")
+        memory = self._get_memory()
+        if not memory:
+            print(f"[MEMORY ERROR] mem0 not available")
+            return {"error": "Memory system not available"}
+        
+        try:
+            # Try using delete_all() method with user_id filter first
+            print(f"[MEMORY] Attempting to delete all memories for user {user_id} using delete_all()")
+            try:
+                result = memory.delete_all(user_id=user_id)
+                print(f"[MEMORY] delete_all() succeeded: {result}")
+                return {"success": True, "result": result, "method": "delete_all"}
+            except Exception as e:
+                print(f"[MEMORY] delete_all() failed: {e}, falling back to individual deletion")
+            
+            # Fallback: Get all memories and delete them individually
+            all_memories = self.get_user_memories(user_id)
+            print(f"[MEMORY] Found {len(all_memories)} memories to clear via individual deletion")
+            
+            deleted_count = 0
+            for mem in all_memories:
+                memory_text = mem.get("memory", "") if isinstance(mem, dict) else str(mem)
+                memory_id = mem.get("id") if isinstance(mem, dict) else None
+                
+                print(f"[MEMORY] Attempting to delete: {memory_text} (ID: {memory_id})")
+                
+                # Try deletion by ID
+                if memory_id:
+                    result = self.delete_memory(user_id, memory_id)
+                    if "success" in result and result["success"]:
+                        deleted_count += 1
+                        print(f"[MEMORY] Successfully deleted memory ID {memory_id}")
+                        continue
+                    else:
+                        print(f"[MEMORY] Failed to delete memory ID {memory_id}: {result}")
+            
+            print(f"[MEMORY] Cleared {deleted_count} preferences for user {user_id}")
+            return {"success": True, "deleted_count": deleted_count, "method": "individual_deletion"}
+        except Exception as e:
+            print(f"[MEMORY ERROR] Error clearing preferences for user {user_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"error": str(e)}
+    
     
     def remove_preference(self, user_id: str, preference_text: str) -> Dict:
         """
@@ -451,17 +537,45 @@ class TravelMemoryManager:
             # Get all memories
             all_memories = self.get_user_memories(user_id)
             
-            # Find and remove matching memory
+            # Normalize search text
+            search_text = preference_text.strip().lower()
+            
+            # Find matching memory - try exact match first, then partial
+            exact_match = None
+            partial_matches = []
+            
             for mem in all_memories:
                 memory_text = mem.get("memory", "") if isinstance(mem, dict) else str(mem)
-                if preference_text.strip().lower() == memory_text.strip().lower():
-                    memory_id = mem.get("id", None)
-                    if memory_id:
-                        return self.delete_memory(user_id, memory_id)
+                memory_text_lower = memory_text.strip().lower()
+                
+                # Exact match
+                if search_text == memory_text_lower:
+                    exact_match = mem
+                    break
+                # Partial match
+                elif search_text in memory_text_lower or memory_text_lower in search_text:
+                    partial_matches.append(mem)
             
-            return {"error": "Preference not found"}
+            # Try exact match first, then first partial match
+            target_mem = exact_match or (partial_matches[0] if partial_matches else None)
+            
+            if target_mem:
+                memory_id = target_mem.get("id", None)
+                if memory_id:
+                    print(f"[MEMORY] Found preference to delete. ID: {memory_id}, Text: {target_mem.get('memory', '')}")
+                    result = self.delete_memory(user_id, memory_id)
+                    if result.get("success"):
+                        return {"success": True, "deleted_id": memory_id, "deleted_text": target_mem.get("memory", "")}
+                    else:
+                        return result
+            
+            print(f"[MEMORY] Could not find preference matching: {preference_text}")
+            print(f"[MEMORY] Available preferences: {[m.get('memory', '') for m in all_memories]}")
+            return {"error": f"Preference '{preference_text}' not found"}
         except Exception as e:
             print(f"[MEMORY ERROR] Error removing preference for user {user_id}: {e}")
+            import traceback
+            traceback.print_exc()
             return {"error": str(e)}
     
     def get_full_user_profile(self, user_id: str) -> Dict:

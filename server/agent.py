@@ -225,6 +225,7 @@ def get_system_prompt_with_memory(user_id: str) -> str:
                             "flight_type_preferences": "🛫 Flight Type",
                             "cabin_class_preferences": "🎫 Cabin Class",
                             "red_eye_preferences": "🌙 Red-Eye Preferences",
+                            "passenger_preferences": "👥 Number of Passengers",
                             "baggage_preferences": "🎒 Baggage",
                             "routes": "🗺️ Favorite Routes",
                             "budget_info": "💰 Budget",
@@ -285,10 +286,12 @@ def get_preference_overrides(user_id: str) -> dict:
     
     try:
         prefs = memory_manager.summarize_preferences(user_id)
+        print(f"[PREFS DEBUG] Summarized preferences for user {user_id}: {prefs}")
         
         # Check for passenger preferences
         if prefs.get("seat_preferences"):
             seat_text = " ".join([str(item) for item in prefs["seat_preferences"]]).lower()
+            print(f"[PREFS DEBUG] Seat preferences found: {seat_text}")
             if "alone" in seat_text or "solo" in seat_text:
                 overrides["adults"] = 1
                 applied_prefs.append("traveling alone")
@@ -302,6 +305,7 @@ def get_preference_overrides(user_id: str) -> dict:
         # Check for cabin class preferences - improved matching
         if prefs.get("cabin_class_preferences"):
             cabin_text = " ".join([str(item) for item in prefs["cabin_class_preferences"]]).lower()
+            print(f"[PREFS DEBUG] Cabin class preferences found: {cabin_text}")
             # Check in order of priority to avoid false matches
             if "first" in cabin_text and "class" in cabin_text:
                 overrides["travel_class"] = "FIRST"
@@ -315,10 +319,13 @@ def get_preference_overrides(user_id: str) -> dict:
             elif "economy" in cabin_text:
                 overrides["travel_class"] = "ECONOMY"
                 applied_prefs.append("Economy preference")
+        else:
+            print(f"[PREFS DEBUG] No cabin class preferences stored for user {user_id}")
         
         # Check for direct flight preferences
         if prefs.get("flight_type_preferences"):
             flight_text = " ".join([str(item) for item in prefs["flight_type_preferences"]]).lower()
+            print(f"[PREFS DEBUG] Flight type preferences found: {flight_text}")
             if "direct" in flight_text or "non-stop" in flight_text:
                 overrides["non_stop"] = True
                 applied_prefs.append("direct/non-stop preference")
@@ -328,6 +335,9 @@ def get_preference_overrides(user_id: str) -> dict:
         return overrides
     except Exception as e:
         print(f"[PREFS ERROR] Error extracting preference overrides: {e}")
+        import traceback
+        traceback.print_exc()
+        return {}
         return {}
 
 def execute_tool(tool_name: str, arguments: dict, user_id: str) -> dict:
@@ -441,7 +451,67 @@ def execute_tool(tool_name: str, arguments: dict, user_id: str) -> dict:
     
     return {"error": "Unknown tool"}
 
-def process_message(user_message: str, user_id: str = "default-user", conversation_history: list = None) -> dict:
+def _merge_preferences(stored_prefs: dict, current_prefs: dict) -> dict:
+    """
+    Merge stored preferences (from mem0) with current UI preferences.
+    Current preferences take priority as they're the latest selections.
+    """
+    import random
+    
+    # Varied phrasings to avoid repetition
+    phrasings = [
+        lambda x: f"Prefers {x}",
+        lambda x: f"Likes {x}",
+        lambda x: f"Interested in {x}",
+        lambda x: f"Looking for {x}",
+        lambda x: f"Going for {x}",
+    ]
+    
+    merged = {}
+    
+    # Add all stored preferences
+    for category, items in stored_prefs.items():
+        if items:
+            merged[category] = items
+    
+    # Add/override with current UI preferences
+    phrasing_func = random.choice(phrasings)
+    
+    if current_prefs.get("directFlightsOnly"):
+        if "flight_type_preferences" not in merged:
+            merged["flight_type_preferences"] = []
+        if not any("direct" in str(item).lower() for item in merged["flight_type_preferences"]):
+            merged["flight_type_preferences"].append(f"{phrasing_func('direct flights only')}")
+    
+    if current_prefs.get("avoidRedEye"):
+        if "red_eye_preferences" not in merged:
+            merged["red_eye_preferences"] = []
+        if not any("red eye" in str(item).lower() or "evening" in str(item).lower() for item in merged["red_eye_preferences"]):
+            merged["red_eye_preferences"].append(f"{phrasing_func('avoiding red-eye flights')}")
+    
+    if current_prefs.get("cabinClass"):
+        if "cabin_class_preferences" not in merged:
+            merged["cabin_class_preferences"] = []
+        # Clear old cabin class preferences
+        cabin = current_prefs['cabinClass']
+        merged["cabin_class_preferences"] = [f"{phrasing_func(f'{cabin} cabin class')}"]
+    
+    if current_prefs.get("preferredTime"):
+        if "time_preferences" not in merged:
+            merged["time_preferences"] = []
+        # Clear old time preferences  
+        time = current_prefs['preferredTime']
+        merged["time_preferences"] = [f"{phrasing_func(f'{time} departures')}"]
+    
+    if current_prefs.get("tripType"):
+        if "trip_type_preferences" not in merged:
+            merged["trip_type_preferences"] = []
+        trip = current_prefs['tripType']
+        merged["trip_type_preferences"] = [f"{phrasing_func(f'{trip} trips')}"]
+    
+    return merged
+
+def process_message(user_message: str, user_id: str = "default-user", conversation_history: list = None, current_preferences: dict = None, username: str = None) -> dict:
     """
     Process a user message and generate a response.
     
@@ -449,16 +519,100 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
         user_message: The user's message
         user_id: The user identifier
         conversation_history: Previous messages in the conversation
+        current_preferences: Current UI preferences (directFlightsOnly, cabinClass, etc.)
+        username: The user's username for personalized greetings
         
     Returns:
         dict with 'content' (str) and optionally 'flight_results' (list)
     """
     if conversation_history is None:
         conversation_history = []
+    if current_preferences is None:
+        current_preferences = {}
+    
+    # Special handling for preference queries
+    message_lower = user_message.lower()
+    if any(word in message_lower for word in ["what are my preferences", "show my preferences", "what preferences do i have", "list my preferences", "my preferences"]):
+        pref_summary = memory_manager.summarize_preferences(user_id, include_ids=True)
+        print(f"[AGENT] Preference query detected. Summary: {pref_summary}")
+        
+        # Merge current UI preferences with stored preferences
+        # Current preferences take priority (they're the latest selections)
+        merged_prefs = _merge_preferences(pref_summary, current_preferences)
+        
+        if not merged_prefs and not current_preferences:
+            return {
+                "content": "Sorry, you currently do not have any stored preferences. You may have deleted your preferences, or you haven't set any yet. I'd be happy to help you set up your travel preferences such as cabin class, flight type, preferred departure times, and more!",
+                "extracted_preferences": [],
+                "flight_results": []
+            }
+        
+        # Format preferences for display
+        pref_lines = []
+        
+        category_display = {
+            "seat_preferences": "🪑 Seat Preferences",
+            "airline_preferences": "✈️ Preferred Airlines",
+            "time_preferences": "🕐 Time Preferences",
+            "flight_type_preferences": "🛫 Flight Type",
+            "cabin_class_preferences": "🎫 Cabin Class",
+            "red_eye_preferences": "🌙 Red-Eye Preferences",
+            "passenger_preferences": "👥 Number of Passengers",
+            "baggage_preferences": "🎒 Baggage",
+            "routes": "🗺️ Favorite Routes",
+            "budget_info": "💰 Budget",
+            "trip_type_preferences": "✈️ Trip Type",
+            "other_preferences": "📋 Other"
+        }
+        
+        has_any_preferences = False
+        for category, items in merged_prefs.items():
+            if items:
+                has_any_preferences = True
+                if not pref_lines:  # Add header only if we have preferences
+                    pref_lines.append("Here are your currently stored travel preferences:\n")
+                display_name = category_display.get(category, category.replace("_", " ").title())
+                pref_lines.append(f"\n{display_name}:")
+                for item in items:
+                    if isinstance(item, dict):
+                        item_text = item.get("text", item.get("memory", str(item)))
+                    else:
+                        item_text = str(item)
+                    
+                    # Clean up preference text
+                    item_text = (item_text
+                        .replace("User's travel preference type is ", "")
+                        .replace("User ", "")
+                        .strip())
+                    
+                    if item_text:  # Only add if not empty after cleaning
+                        pref_lines.append(f"  • {item_text}")
+        
+        if has_any_preferences:
+            pref_lines.append("\n\nFeel free to update these preferences anytime!")
+        
+        
+        return {
+            "content": "\n".join(pref_lines),
+            "extracted_preferences": [],
+            "flight_results": []
+        }
     
     system_prompt = get_system_prompt_with_memory(user_id)
     
     messages = [{"role": "system", "content": system_prompt}]
+    
+    # Add greeting with username if this is the first message in a new conversation
+    greeting_prefix = ""
+    if username and len(conversation_history) == 0:
+        greetings = [
+            f"Hey {username}! 👋 I'm excited to help you find the perfect flights!",
+            f"Welcome, {username}! Ready to start your travel adventure?",
+            f"Hi {username}! Let's find some amazing flights for you.",
+            f"Great to see you, {username}! How can I help with your travel plans?",
+        ]
+        import random
+        greeting_prefix = random.choice(greetings) + "\n\n"
     
     for msg in conversation_history[-10:]:
         messages.append({
@@ -536,14 +690,29 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
             
             final_content = final_response.choices[0].message.content
             
+            # Add greeting if this is the first message
+            if greeting_prefix:
+                final_content = greeting_prefix + final_content
+            
+            # Extract preferences from user message and store them individually
+            extracted_preferences = extract_preferences_from_message(user_message)
+            print(f"[AGENT] Extracted preferences from message: {extracted_preferences}")
+            
+            if extracted_preferences:
+                for pref_label in extracted_preferences:
+                    # Map labels to preference types and store individually
+                    print(f"[AGENT] Storing preference: {pref_label}")
+                    result = memory_manager.store_preference(user_id, "general", pref_label)
+                    print(f"[AGENT] Preference storage result: {result}")
+                    if "error" in result:
+                        print(f"[AGENT ERROR] Failed to store preference '{pref_label}': {result['error']}")
+            
+            # Also do the general memory extraction
             memory_manager.extract_and_store_preferences(user_id, user_message, final_content)
             
             preferences = memory_manager.get_preferences_summary(user_id)
             if preferences:
                 memory_context = "Using your preferences"
-            
-            # Extract preferences from user message for display
-            extracted_preferences = extract_preferences_from_message(user_message)
             
             return {
                 "content": final_content,
