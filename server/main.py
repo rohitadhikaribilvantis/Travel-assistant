@@ -359,6 +359,9 @@ async def chat(request: ChatRequest, current_user: dict = Depends(get_current_us
             for msg in conversation.get("messages", [])
         ]
 
+        # Load user memories before processing (this will be included in system prompt)
+        # The agent's get_system_prompt_with_memory already handles this
+        
         # Process message with agent
         result = process_message(
             user_message=request.message,
@@ -366,7 +369,15 @@ async def chat(request: ChatRequest, current_user: dict = Depends(get_current_us
             conversation_history=conversation_history,
         )
 
-        # Create response message
+        # Extract preferences from the conversation
+        extracted_preferences = result.get("extracted_preferences", [])
+        
+        # Store extracted preferences in mem0 if any were found
+        from memory_manager import memory_manager
+        if extracted_preferences:
+            for pref in extracted_preferences:
+                memory_manager.store_preference(user_id, "general", pref)
+        
         response_message = ChatMessageModel(
             id=str(uuid.uuid4()),
             role="assistant",
@@ -385,9 +396,13 @@ async def chat(request: ChatRequest, current_user: dict = Depends(get_current_us
         })
         storage.add_message(conversation_id, response_message.model_dump())
 
-        return ChatResponse(
-            message=response_message,
-            conversationId=conversation_id,
+        return JSONResponse(
+            status_code=200,
+            content={
+                "message": response_message.model_dump(),
+                "conversationId": conversation_id,
+                "extractedPreferences": extracted_preferences
+            }
         )
 
     except HTTPException:

@@ -58,7 +58,8 @@ class AmadeusClient:
         travel_class: Optional[str] = None,
         non_stop: bool = False,
         max_results: int = 10,
-        max_price: Optional[int] = None
+        max_price: Optional[int] = None,
+        user_preferences: Optional[dict] = None
     ) -> dict:
         """
         Search for flight offers.
@@ -75,9 +76,21 @@ class AmadeusClient:
             non_stop: If True, only search for direct flights
             max_results: Maximum number of results to return
             max_price: Maximum price filter
+            user_preferences: Dictionary of user preferences for filtering (e.g., {'preferred_cabin': 'BUSINESS'})
         """
         url = f"{self.BASE_URL}/v2/shopping/flight-offers"
         
+        # Apply user preferences if provided
+        if user_preferences:
+            # If user prefers non-stop flights, apply that filter
+            if user_preferences.get("non_stop_only", False):
+                non_stop = True
+            # If user has a cabin class preference and none was explicitly requested, use it
+            if not travel_class and user_preferences.get("preferred_cabin"):
+                travel_class = user_preferences.get("preferred_cabin")
+            # If user has a max price preference
+            if not max_price and user_preferences.get("max_price"):
+                max_price = user_preferences.get("max_price")
         params = {
             "originLocationCode": origin.upper(),
             "destinationLocationCode": destination.upper(),
@@ -117,7 +130,13 @@ class AmadeusClient:
                 return {"error": error_msg, "data": []}
             
             data = response.json()
-            return self._process_flight_offers(data)
+            processed = self._process_flight_offers(data)
+            
+            # Apply post-search filtering based on user preferences
+            if user_preferences:
+                processed["data"] = self._filter_flights_by_preferences(processed.get("data", []), user_preferences)
+            
+            return processed
             
         except Exception as e:
             return {"error": str(e), "data": []}
@@ -182,6 +201,101 @@ class AmadeusClient:
             processed_offers.append(processed)
         
         return {"data": processed_offers, "meta": raw_data.get("meta", {})}
+    
+    def _filter_flights_by_preferences(self, flights: list, user_preferences: dict) -> list:
+        """
+        Filter flights based on user preferences.
+        
+        Args:
+            flights: List of flight offers
+            user_preferences: Dictionary with preference filters
+            
+        Returns:
+            Filtered list of flights
+        """
+        filtered = flights
+        
+        # Filter by avoided airlines
+        avoided_airlines = user_preferences.get("avoided_airlines", [])
+        if avoided_airlines:
+            filtered = [f for f in filtered if not any(
+                segment.get("carrierCode") in avoided_airlines 
+                for itinerary in f.get("itineraries", []) 
+                for segment in itinerary.get("segments", [])
+            )]
+        
+        # Filter by preferred airlines (if specified)
+        preferred_airlines = user_preferences.get("preferred_airlines", [])
+        if preferred_airlines:
+            filtered = [f for f in filtered if any(
+                segment.get("carrierCode") in preferred_airlines 
+                for itinerary in f.get("itineraries", []) 
+                for segment in itinerary.get("segments", [])
+            )]
+        
+        # Filter by max stops
+        max_stops = user_preferences.get("max_stops")
+        if max_stops is not None:
+            filtered = [f for f in filtered if all(
+                len(itinerary.get("segments", [])) - 1 <= max_stops
+                for itinerary in f.get("itineraries", [])
+            )]
+        
+        # Filter by departure time preferences
+        departure_times = user_preferences.get("departure_time_preferences", [])
+        if departure_times:
+            filtered = [f for f in filtered if self._matches_departure_preferences(f, departure_times)]
+        
+        # Filter by red-eye avoidance
+        if user_preferences.get("avoid_red_eye", False):
+            filtered = [f for f in filtered if not self._is_red_eye(f)]
+        
+        return filtered
+    
+    def _matches_departure_preferences(self, flight: dict, time_preferences: list) -> bool:
+        """Check if flight matches departure time preferences (early morning, afternoon, evening)."""
+        try:
+            itinerary = flight.get("itineraries", [{}])[0]
+            segments = itinerary.get("segments", [])
+            if not segments:
+                return True
+            
+            departure_time_str = segments[0].get("departure", {}).get("at", "")
+            if not departure_time_str:
+                return True
+            
+            # Extract hour from ISO datetime
+            hour = int(departure_time_str.split("T")[1].split(":")[0])
+            
+            for pref in time_preferences:
+                pref_lower = pref.lower()
+                if "morning" in pref_lower and 5 <= hour < 12:
+                    return True
+                if "afternoon" in pref_lower and 12 <= hour < 17:
+                    return True
+                if "evening" in pref_lower and 17 <= hour < 23:
+                    return True
+            
+            return False
+        except:
+            return True
+    
+    def _is_red_eye(self, flight: dict) -> bool:
+        """Check if flight is a red-eye (late night departure 10pm-6am)."""
+        try:
+            itinerary = flight.get("itineraries", [{}])[0]
+            segments = itinerary.get("segments", [])
+            if not segments:
+                return False
+            
+            departure_time_str = segments[0].get("departure", {}).get("at", "")
+            if not departure_time_str:
+                return False
+            
+            hour = int(departure_time_str.split("T")[1].split(":")[0])
+            return hour >= 22 or hour < 6
+        except:
+            return False
     
     def tag_flight_offers(self, offers: list) -> list:
         """Add comparison tags to flight offers (cheapest, fastest, best)."""

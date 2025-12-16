@@ -9,6 +9,80 @@ from memory_manager import memory_manager
 
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
+def extract_preferences_from_message(user_message: str) -> list[str]:
+    """Extract detailed preference statements from user messages."""
+    preferences = []
+    message_lower = user_message.lower()
+    
+    # Seat preferences
+    seat_patterns = [
+        (r"(?:i\s+)?(?:prefer|want|need)\s+(?:window|aisle|exit\s+row)\s+seats?", "window/aisle/exit row"),
+        (r"(?:no|avoid|don't\s+like|hate)\s+(?:middle|center)\s+seats?", "avoid middle seats"),
+        (r"(?:window|aisle|exit\s+row)\s+seats?", "window/aisle/exit row seats"),
+    ]
+    
+    # Airline preferences
+    airline_patterns = [
+        (r"(?:i\s+)?(?:prefer|fly|love)\s+(?:with\s+)?(?:united|american|delta|southwest|jetblue|alaska|spirit|frontier|southwest)", "preferred airline"),
+        (r"(?:avoid|don't\s+like|hate)\s+(?:united|american|delta|southwest|jetblue|alaska|spirit|frontier)", "avoid airline"),
+    ]
+    
+    # Time preferences
+    time_patterns = [
+        (r"(?:early\s+)?morning\s+flights?", "early morning flights"),
+        (r"late\s+evening\s+flights?", "late evening flights"),
+        (r"afternoon\s+flights?", "afternoon flights"),
+        (r"(?:prefer|want)\s+(?:early|late|morning|afternoon|evening)\s+departures?", "preferred departure time"),
+    ]
+    
+    # Flight type preferences
+    flight_patterns = [
+        (r"direct\s+flights?\s+(?:only|preferred)", "direct flights only"),
+        (r"(?:no|avoid)\s+layovers?", "avoid layovers"),
+        (r"(?:don't\s+)?(?:mind|ok\s+with)\s+(?:one|1)\s+stop", "one stop acceptable"),
+        (r"non-stop\s+(?:only|preferred)", "non-stop flights only"),
+    ]
+    
+    # Passenger preferences
+    passenger_patterns = [
+        (r"(?:i\s+)?(?:travel\s+)?(?:alone|solo)", "traveling alone"),
+        (r"(?:with\s+)?(?:family|kids|children)", "traveling with family"),
+        (r"(?:with\s+)?(?:partner|spouse|significant\s+other)", "traveling with partner"),
+    ]
+    
+    # Baggage preferences
+    baggage_patterns = [
+        (r"(?:light\s+)?packer|minimal\s+baggage", "light packer"),
+        (r"(?:need|require)\s+(?:extra|checked)\s+baggage", "extra baggage needed"),
+        (r"cabin\s+baggage\s+only", "carry-on only"),
+    ]
+    
+    # Budget preferences
+    budget_patterns = [
+        (r"(?:budget|cheap|economy|low\s+cost)", "budget conscious"),
+        (r"(?:luxury|premium|first\s+class|business\s+class)", "luxury travel"),
+    ]
+    
+    all_patterns = [
+        seat_patterns, airline_patterns, time_patterns, 
+        flight_patterns, passenger_patterns, baggage_patterns, budget_patterns
+    ]
+    
+    for pattern_group in all_patterns:
+        for pattern, label in pattern_group:
+            if re.search(pattern, message_lower):
+                preferences.append(label)
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_prefs = []
+    for pref in preferences:
+        if pref not in seen:
+            seen.add(pref)
+            unique_prefs.append(pref)
+    
+    return unique_prefs
+
 TOOLS = [
     {
         "type": "function",
@@ -114,13 +188,14 @@ When you successfully search for flights, format your response to be clear and h
 """
 
 def get_system_prompt_with_memory(user_id: str) -> str:
-    """Get system prompt enriched with user memories."""
+    """Get system prompt enriched with user memories at conversation start."""
     base_prompt = SYSTEM_PROMPT.format(today=datetime.now().strftime("%Y-%m-%d"))
     
-    preferences = memory_manager.get_preferences_summary(user_id)
+    # Retrieve comprehensive user context from memories
+    user_context = memory_manager.get_user_context(user_id)
     
-    if preferences:
-        base_prompt += f"\n\n{preferences}"
+    if user_context:
+        base_prompt += f"\n\nCONTEXT ABOUT THIS USER:\n{user_context}\n\nApply these preferences to flight searches and recommendations when relevant."
     
     return base_prompt
 
@@ -192,12 +267,30 @@ def execute_tool(tool_name: str, arguments: dict, user_id: str) -> dict:
     
     elif tool_name == "remember_preference":
         preference = arguments.get("preference", "")
-        messages = [
-            {"role": "user", "content": f"I {preference}"},
-            {"role": "assistant", "content": f"I'll remember that you {preference}."}
-        ]
-        memory_manager.add_memory(user_id, messages)
-        return {"success": True, "preference": preference}
+        # Extract preference type from the preference text
+        preference_lower = preference.lower()
+        
+        # Categorize the preference
+        preference_type = "general"
+        if any(word in preference_lower for word in ["seat", "window", "aisle", "middle", "exit row"]):
+            preference_type = "seat"
+        elif any(word in preference_lower for word in ["airline", "united", "delta", "american", "southwest"]):
+            preference_type = "airline"
+        elif any(word in preference_lower for word in ["morning", "evening", "afternoon", "time", "depart"]):
+            preference_type = "departure_time"
+        elif any(word in preference_lower for word in ["direct", "non-stop", "layover", "stop"]):
+            preference_type = "flight_type"
+        elif any(word in preference_lower for word in ["business", "economy", "premium", "first class"]):
+            preference_type = "cabin_class"
+        elif any(word in preference_lower for word in ["red-eye", "night"]):
+            preference_type = "red_eye"
+        elif any(word in preference_lower for word in ["baggage", "luggage", "bag"]):
+            preference_type = "baggage"
+        
+        # Store preference in mem0
+        memory_manager.store_preference(user_id, preference_type, preference)
+        
+        return {"success": True, "preference": preference, "preference_type": preference_type}
     
     return {"error": "Unknown tool"}
 
@@ -307,15 +400,20 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
         
         memory_manager.extract_and_store_preferences(user_id, user_message, content)
         
+        # Extract preferences from user message
+        extracted_preferences = extract_preferences_from_message(user_message)
+        
         return {
             "content": content,
             "flight_results": [],
-            "memory_context": None
+            "memory_context": None,
+            "extracted_preferences": extracted_preferences
         }
         
     except Exception as e:
         return {
             "content": f"I apologize, but I encountered an error while processing your request: {str(e)}. Please try again.",
             "flight_results": [],
-            "memory_context": None
+            "memory_context": None,
+            "extracted_preferences": []
         }

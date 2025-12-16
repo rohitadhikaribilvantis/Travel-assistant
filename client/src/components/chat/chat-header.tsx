@@ -1,9 +1,11 @@
-import { Plane, Settings, LogOut } from "lucide-react";
+import { Plane, Settings, LogOut, X } from "lucide-react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/use-auth";
+import { useState, useEffect } from "react";
+import { usePreferences } from "@/hooks/use-preferences";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,12 +15,34 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 interface ChatHeaderProps {
-  // onNewChat removed - use sidebar button instead
+  // No longer needed
 }
 
 export function ChatHeader({ }: ChatHeaderProps) {
   const { user, logout } = useAuth();
   const [, navigate] = useLocation();
+  const { preferences, setPreferences, removeCustomPreference, addMultiplePreferences } = usePreferences(user?.id);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
+
+  // Watch for new extracted preferences from chat
+  useEffect(() => {
+    if (user?.id) {
+      const checkInterval = setInterval(() => {
+        const newPrefs = localStorage.getItem(`new_preferences_${user.id}`);
+        if (newPrefs) {
+          try {
+            const prefs = JSON.parse(newPrefs);
+            addMultiplePreferences(prefs);
+            localStorage.removeItem(`new_preferences_${user.id}`);
+          } catch (e) {
+            console.error("Failed to parse new preferences:", e);
+          }
+        }
+      }, 500);
+
+      return () => clearInterval(checkInterval);
+    }
+  }, [user?.id, addMultiplePreferences]);
 
   const handleLogout = () => {
     logout();
@@ -44,14 +68,206 @@ export function ChatHeader({ }: ChatHeaderProps) {
       </div>
       
       <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          data-testid="button-settings"
-        >
-          <Settings className="h-5 w-5" />
-          <span className="sr-only">Settings</span>
-        </Button>
+        <DropdownMenu open={preferencesOpen} onOpenChange={setPreferencesOpen}>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              data-testid="button-preferences"
+              title="Preferences"
+            >
+              <Settings className="h-5 w-5" />
+              <span className="sr-only">Preferences</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-64">
+            <div className="px-2 py-1.5">
+              <h3 className="font-semibold text-sm">Preferences</h3>
+            </div>
+            <DropdownMenuSeparator />
+            
+            <div className="px-3 py-2">
+              <label className="text-xs font-medium">Currency</label>
+              <select
+                value={preferences.currency}
+                onChange={(e) =>
+                  setPreferences({ ...preferences, currency: e.target.value })
+                }
+                className="w-full mt-1 px-2 py-1 text-sm border rounded bg-background"
+              >
+                <option>USD</option>
+                <option>EUR</option>
+                <option>GBP</option>
+                <option>INR</option>
+                <option>JPY</option>
+              </select>
+            </div>
+            
+            <div className="px-3 py-2">
+              <label className="text-xs font-medium">Distance Units</label>
+              <select
+                value={preferences.distanceUnits}
+                onChange={(e) =>
+                  setPreferences({ ...preferences, distanceUnits: e.target.value })
+                }
+                className="w-full mt-1 px-2 py-1 text-sm border rounded bg-background"
+              >
+                <option>Miles</option>
+                <option>Kilometers</option>
+              </select>
+            </div>
+            
+            <div className="px-3 py-2">
+              <label className="text-xs font-medium">Cabin Class</label>
+              <select
+                value={preferences.cabinClass}
+                onChange={(e) =>
+                  setPreferences({ ...preferences, cabinClass: e.target.value })
+                }
+                className="w-full mt-1 px-2 py-1 text-sm border rounded bg-background"
+              >
+                <option>Economy</option>
+                <option>Premium Economy</option>
+                <option>Business</option>
+                <option>First Class</option>
+              </select>
+            </div>
+            
+            {preferences.customPreferences.length > 0 && (
+              <>
+                <DropdownMenuSeparator />
+                <div className="px-3 py-2">
+                  <p className="text-xs font-medium mb-3">Your Preferences</p>
+                  
+                  {preferences.seatPreferences.length > 0 && (
+                    <div className="mb-3">
+                      <p className="text-xs text-muted-foreground mb-1">💺 Seating</p>
+                      <div className="space-y-1">
+                        {preferences.seatPreferences.map((pref, i) => (
+                          <div key={i} className="flex items-center justify-between text-xs bg-muted p-1.5 rounded gap-2">
+                            <span>{pref}</span>
+                            <button
+                              onClick={() => removeCustomPreference(preferences.customPreferences.indexOf(pref))}
+                              className="hover:text-red-600"
+                              title="Remove"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {preferences.timePreferences.length > 0 && (
+                    <div className="mb-3">
+                      <p className="text-xs text-muted-foreground mb-1">🕐 Departure Time</p>
+                      <div className="space-y-1">
+                        {preferences.timePreferences.map((pref, i) => (
+                          <div key={i} className="flex items-center justify-between text-xs bg-muted p-1.5 rounded gap-2">
+                            <span>{pref}</span>
+                            <button
+                              onClick={() => removeCustomPreference(preferences.customPreferences.indexOf(pref))}
+                              className="hover:text-red-600"
+                              title="Remove"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {preferences.airlinePreferences.length > 0 && (
+                    <div className="mb-3">
+                      <p className="text-xs text-muted-foreground mb-1">✈️ Airlines</p>
+                      <div className="space-y-1">
+                        {preferences.airlinePreferences.map((pref, i) => (
+                          <div key={i} className="flex items-center justify-between text-xs bg-muted p-1.5 rounded gap-2">
+                            <span>{pref}</span>
+                            <button
+                              onClick={() => removeCustomPreference(preferences.customPreferences.indexOf(pref))}
+                              className="hover:text-red-600"
+                              title="Remove"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {preferences.flightTypePreferences.length > 0 && (
+                    <div className="mb-3">
+                      <p className="text-xs text-muted-foreground mb-1">🛫 Flight Type</p>
+                      <div className="space-y-1">
+                        {preferences.flightTypePreferences.map((pref, i) => (
+                          <div key={i} className="flex items-center justify-between text-xs bg-muted p-1.5 rounded gap-2">
+                            <span>{pref}</span>
+                            <button
+                              onClick={() => removeCustomPreference(preferences.customPreferences.indexOf(pref))}
+                              className="hover:text-red-600"
+                              title="Remove"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {preferences.otherPreferences.length > 0 && (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">📋 Other</p>
+                      <div className="space-y-1">
+                        {preferences.otherPreferences.map((pref, i) => (
+                          <div key={i} className="flex items-center justify-between text-xs bg-muted p-1.5 rounded gap-2">
+                            <span>{pref}</span>
+                            <button
+                              onClick={() => removeCustomPreference(preferences.customPreferences.indexOf(pref))}
+                              className="hover:text-red-600"
+                              title="Remove"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            <DropdownMenuSeparator />
+            <div className="px-3 py-2">
+              <p className="text-xs font-medium mb-2">Book Flights</p>
+              <div className="space-y-1">
+                {[
+                  { name: "Google Flights", url: "https://www.google.com/flights" },
+                  { name: "Skyscanner", url: "https://www.skyscanner.com" },
+                  { name: "Kayak", url: "https://www.kayak.com" },
+                  { name: "Expedia", url: "https://www.expedia.com" },
+                  { name: "Booking.com", url: "https://www.booking.com" },
+                ].map((site) => (
+                  <a
+                    key={site.name}
+                    href={site.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-xs text-primary hover:underline p-1 rounded hover:bg-muted"
+                  >
+                    {site.name} →
+                  </a>
+                ))}
+              </div>
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
         <ThemeToggle />
         
         {user && (

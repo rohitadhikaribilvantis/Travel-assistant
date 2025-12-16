@@ -7,10 +7,10 @@ import { useAuth } from "./use-auth";
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | undefined>();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
 
   const sendMessageMutation = useMutation({
-    mutationFn: async (message: string): Promise<ChatResponse> => {
+    mutationFn: async (message: string): Promise<any> => {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
@@ -32,7 +32,50 @@ export function useChat() {
     },
     onSuccess: (data) => {
       setConversationId(data.conversationId);
-      setMessages((prev) => [...prev, data.message]);
+      
+      // Add assistant message with streaming effect
+      const assistantMessage: ChatMessage = {
+        ...data.message,
+        isStreaming: true,
+      };
+      
+      setMessages((prev) => [...prev, assistantMessage]);
+      
+      // Simulate streaming by updating message gradually
+      const chunks = data.message.content.split(" ");
+      let currentIndex = 0;
+      
+      const streamInterval = setInterval(() => {
+        if (currentIndex < chunks.length) {
+          const streamedContent = chunks.slice(0, currentIndex + 3).join(" ");
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === data.message.id
+                ? { ...msg, content: streamedContent, isStreaming: true }
+                : msg
+            )
+          );
+          currentIndex += 3;
+        } else {
+          clearInterval(streamInterval);
+          // Mark as finished streaming
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === data.message.id
+                ? { ...msg, isStreaming: false }
+                : msg
+            )
+          );
+        }
+      }, 50);
+      
+      // Store extracted preferences in localStorage so ChatHeader can pick them up
+      if (data.extractedPreferences && data.extractedPreferences.length > 0 && user?.id) {
+        localStorage.setItem(
+          `new_preferences_${user.id}`,
+          JSON.stringify(data.extractedPreferences)
+        );
+      }
     },
     onError: (error) => {
       const errorMessage: ChatMessage = {

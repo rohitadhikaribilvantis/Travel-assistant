@@ -2,11 +2,13 @@ import { useState, useRef, useEffect } from "react";
 import { Send, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import type { ChatMessage } from "@shared/schema";
 
 interface ChatInputProps {
   onSendMessage: (message: string) => void;
   isLoading?: boolean;
   disabled?: boolean;
+  messages?: ChatMessage[];
 }
 
 const SUGGESTED_PROMPTS = [
@@ -16,9 +18,23 @@ const SUGGESTED_PROMPTS = [
   "Find direct flights from LAX to Miami",
 ];
 
-export function ChatInput({ onSendMessage, isLoading, disabled }: ChatInputProps) {
+const FILTER_SUGGESTIONS = [
+  "Show me cheaper options",
+  "I prefer direct flights only",
+  "Find morning departure flights",
+  "Show non-stop flights under $500",
+  "Filter by my preferred airline",
+  "Show me the fastest options",
+];
+
+export function ChatInput({ onSendMessage, isLoading, disabled, messages }: ChatInputProps) {
   const [message, setMessage] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Check if last message has flight results
+  const lastMessage = messages?.[messages.length - 1];
+  const hasFlights = lastMessage?.flightResults && lastMessage.flightResults.length > 0;
+  const suggestions = hasFlights ? FILTER_SUGGESTIONS : SUGGESTED_PROMPTS;
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -53,6 +69,24 @@ export function ChatInput({ onSendMessage, isLoading, disabled }: ChatInputProps
 
   return (
     <div className="sticky bottom-0 z-50 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      {/* Quick Filter/Suggestion Buttons */}
+      {suggestions.length > 0 && (
+        <div className="border-b px-4 py-2 flex gap-2 overflow-x-auto scrollbar-hide">
+          {suggestions.map((suggestion, idx) => (
+            <Button
+              key={idx}
+              size="sm"
+              variant="outline"
+              onClick={() => handleSuggestionClick(suggestion)}
+              disabled={isLoading || disabled}
+              className="whitespace-nowrap text-xs"
+            >
+              {suggestion}
+            </Button>
+          ))}
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="flex items-end gap-2 p-4">
         <div className="relative flex-1">
           <Textarea
@@ -60,7 +94,11 @@ export function ChatInput({ onSendMessage, isLoading, disabled }: ChatInputProps
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask me about flights, destinations, or travel plans..."
+            placeholder={
+              hasFlights
+                ? "Refine your search or ask for more options..."
+                : "Ask me about flights, destinations, or travel plans..."
+            }
             disabled={isLoading || disabled}
             className="min-h-[44px] max-h-[120px] resize-none pr-12"
             rows={1}

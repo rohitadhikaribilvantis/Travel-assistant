@@ -1,4 +1,4 @@
-import { Clock, Plane, ArrowRight } from "lucide-react";
+import { Clock, Plane, ArrowRight, ExternalLink } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -61,6 +61,28 @@ export function FlightCard({ flight, index }: FlightCardProps) {
         return tag;
     }
   };
+
+  const buildBookingUrl = (website: string): string => {
+    const origin = firstSegment.departure.iataCode;
+    const destination = lastSegment.arrival.iataCode;
+    const departDate = firstSegment.departure.at.split("T")[0];
+    const departTime = firstSegment.departure.at.split("T")[1]?.substring(0, 5);
+    const arrivalTime = lastSegment.arrival.at.split("T")[1]?.substring(0, 5);
+    const carrier = firstSegment.carrierCode;
+    const flightNumber = firstSegment.number;
+
+    const baseUrls = {
+      google: `https://www.google.com/flights/search?tfs=${origin}${destination}${departDate.replace(/-/g, "")}r`,
+      skyscanner: `https://www.skyscanner.com/transport/flights/${origin}/${destination}/${departDate}?adultsv2=1&cabinclass=${flight.travelClass?.toLowerCase() || "economy"}`,
+      kayak: `https://www.kayak.com/flights/${origin}-${destination}/${departDate}?a=${carrier}`,
+      expedia: `https://www.expedia.com/Flights-Search?trip=oneway&leg1=from:${origin},to:${destination},departure:${departDate}&passengers=1&cabin=${flight.travelClass?.toLowerCase() || "economy"}`,
+    };
+    return baseUrls[website as keyof typeof baseUrls] || baseUrls.google;
+  };
+
+  const websites = [
+    { name: "Google Flights", key: "google" },
+  ];
 
   return (
     <Card
@@ -194,12 +216,16 @@ export function FlightCard({ flight, index }: FlightCardProps) {
                   {flight.travelClass.replace("_", " ")}
                 </Badge>
               )}
-              <Button
-                className="mt-2 w-full md:w-auto"
-                data-testid={`button-select-flight-${flight.id}`}
-              >
-                Select
-              </Button>
+              <div className="mt-2 flex w-full flex-col gap-2 md:w-auto">
+                <Button
+                  size="sm"
+                  onClick={() => window.open(buildBookingUrl("google"), "_blank")}
+                  className="flex items-center gap-1"
+                >
+                  Book on Google Flights
+                  <ExternalLink className="h-3 w-3" />
+                </Button>
+              </div>
             </div>
           </div>
         </div>

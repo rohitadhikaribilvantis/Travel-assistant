@@ -1,16 +1,19 @@
-import { Bot, User } from "lucide-react";
+import { Bot, User, Sliders } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@shared/schema";
 import { FlightCard } from "./flight-card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 interface MessageBubbleProps {
   message: ChatMessage;
+  onShowFilter?: () => void;
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, onShowFilter }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
+  const hasFlights = message.flightResults && message.flightResults.length > 0;
 
   const formatTimestamp = (timestamp: string) => {
     const date = new Date(timestamp);
@@ -67,11 +70,27 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           )}
         </div>
 
-        {message.flightResults && message.flightResults.length > 0 && (
-          <div className="mt-2 flex w-full flex-col gap-4">
-            {message.flightResults.map((flight, index) => (
-              <FlightCard key={flight.id} flight={flight} index={index} />
-            ))}
+        {hasFlights && (
+          <div className="mt-2 w-full space-y-3">
+            {/* Filter Button */}
+            {onShowFilter && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onShowFilter}
+                className="w-full gap-2"
+              >
+                <Sliders className="h-4 w-4" />
+                Refine Results
+              </Button>
+            )}
+
+            {/* Flight Cards */}
+            <div className="flex w-full flex-col gap-4">
+              {message.flightResults!.map((flight, index) => (
+                <FlightCard key={flight.id} flight={flight} index={index} />
+              ))}
+            </div>
           </div>
         )}
 

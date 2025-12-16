@@ -281,7 +281,7 @@ export default function Home() {
       <div className="flex flex-1 flex-col">
         <ChatHeader />
         <ChatContainer messages={messages} isLoading={isLoading} />
-        <ChatInput onSendMessage={sendMessage} isLoading={isLoading} />
+        <ChatInput onSendMessage={sendMessage} isLoading={isLoading} messages={messages} />
       </div>
     </div>
   );
