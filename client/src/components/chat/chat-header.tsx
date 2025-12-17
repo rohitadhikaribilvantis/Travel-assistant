@@ -20,6 +20,11 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 
 import type { CurrentPreferences } from "@/hooks/use-chat";
 
+// Helper function to clean preference text
+const cleanPreferenceText = (text: string): string => {
+  return text.replace(" for general", "").trim();
+};
+
 interface ChatHeaderProps {
   onPreferencesRefresh?: () => void;
   externalRefreshTrigger?: number;
@@ -459,7 +464,7 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
                   
                   {memoryPreferences?.departure_time && memoryPreferences.departure_time.length > 0 && memoryPreferences.departure_time.map((pref, i) => (
                     <div key={`time-${i}`} className="text-sm bg-green-50 dark:bg-green-950 p-3 rounded flex items-center justify-between group hover:bg-green-100 dark:hover:bg-green-900 transition-colors border border-green-200 dark:border-green-800">
-                      <span>🕐 {typeof pref === "string" ? pref : pref.text || pref.memory}</span>
+                      <span>🕐 {cleanPreferenceText(typeof pref === "string" ? pref : pref.text || pref.memory)}</span>
                       <button
                         onClick={() => handleRemovePreference(pref)}
                         disabled={isRemovingPreference}
@@ -528,7 +533,7 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
 
                   {memoryPreferences?.passenger && memoryPreferences.passenger.length > 0 && memoryPreferences.passenger.map((pref, i) => (
                     <div key={`pax-${i}`} className="text-sm bg-green-50 dark:bg-green-950 p-3 rounded flex items-center justify-between group hover:bg-green-100 dark:hover:bg-green-900 transition-colors border border-green-200 dark:border-green-800">
-                      <span>👥 {typeof pref === "string" ? pref : pref.text || pref.memory}</span>
+                      <span>👥 {cleanPreferenceText(typeof pref === "string" ? pref : pref.text || pref.memory)}</span>
                       <button
                         onClick={() => handleRemovePreference(pref)}
                         disabled={isRemovingPreference}

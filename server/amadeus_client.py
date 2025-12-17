@@ -150,7 +150,7 @@ class AmadeusClient:
         processed_offers = []
         
         for offer in offers:
-            processed = {
+            base_processed = {
                 "id": offer["id"],
                 "price": {
                     "total": offer["price"]["total"],
@@ -190,15 +190,34 @@ class AmadeusClient:
                     }
                     processed_itinerary["segments"].append(processed_segment)
                 
-                processed["itineraries"].append(processed_itinerary)
+                base_processed["itineraries"].append(processed_itinerary)
             
+            # Extract ALL cabin classes from traveler pricings
+            # Amadeus API may return multiple cabin options for the same flight
             traveler_pricings = offer.get("travelerPricings", [])
-            if traveler_pricings:
-                cabin = traveler_pricings[0].get("fareDetailsBySegment", [{}])[0].get("cabin")
-                if cabin:
-                    processed["travelClass"] = cabin
             
-            processed_offers.append(processed)
+            if traveler_pricings:
+                # Get all unique cabin classes from this flight
+                cabin_classes = set()
+                for pricing in traveler_pricings:
+                    fare_details = pricing.get("fareDetailsBySegment", [])
+                    for detail in fare_details:
+                        cabin = detail.get("cabin")
+                        if cabin:
+                            cabin_classes.add(cabin)
+                
+                # If we found multiple cabin classes, create separate entries for each
+                if cabin_classes:
+                    for cabin in sorted(cabin_classes):
+                        processed = base_processed.copy()
+                        processed["travelClass"] = cabin
+                        processed_offers.append(processed)
+                else:
+                    # Fallback: no cabin info found
+                    processed_offers.append(base_processed)
+            else:
+                # No traveler pricing info, add as-is
+                processed_offers.append(base_processed)
         
         return {"data": processed_offers, "meta": raw_data.get("meta", {})}
     

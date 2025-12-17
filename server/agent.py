@@ -40,7 +40,7 @@ def extract_preferences_from_message(user_message: str) -> list[str]:
         (r"(?:find|search\s+for|want|need)?\s*direct\s+flights?", "direct flights"),
         (r"non-?stop\s+(?:only|flights|preferred)?", "non-stop flights"),
         (r"(?:no|avoid)\s+layovers?", "avoid layovers"),
-        (r"(?:don't\s+)?(?:mind|ok\s+with)\s+(?:one|1)\s+stop", "one stop acceptable"),
+        (r"(?:don't\s+)?(?:mind|ok\s+with)\s+(?:one|1|multiple|some)?\s*layovers?", "willing to take layovers"),
     ]
     
     # Passenger preferences
@@ -61,6 +61,11 @@ def extract_preferences_from_message(user_message: str) -> list[str]:
     budget_patterns = [
         (r"(?:budget|cheap|low\s+cost)", "budget conscious"),
         (r"(?:luxury|premium|first\s+class|business\s+class)", "luxury travel"),
+    ]
+    
+    # Location/home preferences
+    location_patterns = [
+        (r"(?:i\s+)?(?:live|based|from)\s+(?:in\s+)?(\w+)", "home city prefere, location_patternsnce"),
     ]
     
     all_patterns = [
@@ -152,12 +157,24 @@ Your capabilities:
 2. Remember user preferences using the remember_preference tool
 3. Provide travel advice and recommendations
 
+CRITICAL - TOOL USAGE:
+- When the user asks for flights or mentions a destination, IMMEDIATELY call search_flights
+- DO NOT say "I'll search for flights" without actually calling the tool in the same response
+- If you mention performing a search, you MUST call search_flights in that same response
+- When a user expresses a NEW preference (e.g., "I prefer morning flights") AND there is a previous flight search context in the conversation, IMMEDIATELY re-search using the updated preference
+
 MEMORY & PREFERENCES (CRITICAL):
 - You have access to the user's stored preferences at the start of every conversation
 - ALWAYS retrieve and use stored preferences automatically - DO NOT ask for information you already have
 - When presenting flights, MENTION which preferences you're applying (e.g., "Since you prefer direct flights and economy class...")
 - When user expresses a NEW preference, CONFIRM it immediately: "Got it, I'll avoid red-eye flights in future searches"
 - Store preferences like: seat type (window/aisle), airlines, stops, departure times, cabin class, and red-eye aversion
+
+CABIN CLASS - IMPORTANT:
+- If the user is asking to search for flights but has NOT selected/mentioned a cabin class preference, you MUST ask them which cabin class they prefer BEFORE searching
+- Offer options: "Would you like Economy, Premium Economy, Business, or First Class?"
+- Once they specify, store it as a preference and then search
+- If they have a stored cabin class preference, use it automatically without asking
 
 Guidelines:
 - Be conversational, warm, and helpful
@@ -229,6 +246,7 @@ def get_system_prompt_with_memory(user_id: str) -> str:
                             "baggage_preferences": "🎒 Baggage",
                             "routes": "🗺️ Favorite Routes",
                             "budget_info": "💰 Budget",
+                            "location": "📍 Home Location",
                             "other_preferences": "📋 Other"
                         }
                         display_name = category_display.get(category, category.replace("_", " ").title())
@@ -330,6 +348,22 @@ def get_preference_overrides(user_id: str) -> dict:
                 overrides["non_stop"] = True
                 applied_prefs.append("direct/non-stop preference")
         
+        # Check for time/departure preferences
+        if prefs.get("time_preferences") or prefs.get("departure_time"):
+            time_prefs = prefs.get("time_preferences", []) or prefs.get("departure_time", [])
+            time_text = " ".join([str(item) for item in time_prefs]).lower()
+            print(f"[PREFS DEBUG] Time preferences found: {time_text}")
+            if time_text:
+                overrides["time_preference"] = time_text
+                if "morning" in time_text:
+                    applied_prefs.append("morning flights")
+                elif "afternoon" in time_text:
+                    applied_prefs.append("afternoon flights")
+                elif "evening" in time_text:
+                    applied_prefs.append("evening flights")
+                else:
+                    applied_prefs.append(f"time preference: {time_text}")
+        
         overrides["applied_prefs_summary"] = " & ".join(applied_prefs) if applied_prefs else None
         print(f"[PREFS] Extracted overrides for user {user_id}: {overrides}")
         return overrides
@@ -402,7 +436,7 @@ def execute_tool(tool_name: str, arguments: dict, user_id: str) -> dict:
         preference_lower = preference.lower()
         
         # Categorize the preference
-        preference_type = "general"
+        preference_type = None
         confirmation_msg = None
         
         if any(word in preference_lower for word in ["seat", "window", "aisle", "middle", "exit row", "solo", "alone", "single", "travelling alone"]):
@@ -426,28 +460,37 @@ def execute_tool(tool_name: str, arguments: dict, user_id: str) -> dict:
         elif any(word in preference_lower for word in ["baggage", "luggage", "bag"]):
             preference_type = "baggage"
             confirmation_msg = f"Noted! I'll remember your baggage preference."
+        
+        # Only store if we could categorize it properly
+        if preference_type:
+            print(f"[PREF] Categorized as: {preference_type}")
+            
+            # Store preference in mem0 using structured schema
+            result = memory_manager.add_structured_memory(
+                user_id=user_id,
+                category="preference",
+                content=preference,
+                memory_type=preference_type,
+                metadata={"extracted_at": datetime.now().isoformat()}
+            )
+            
+            print(f"[PREF] Storage result: {result}")
+            return {
+                "success": True,
+                "preference": preference,
+                "preference_type": preference_type,
+                "stored": bool(result and "error" not in result),
+                "confirmation": confirmation_msg
+            }
         else:
-            confirmation_msg = f"Great! I've saved this preference: {preference}"
-        
-        print(f"[PREF] Categorized as: {preference_type}")
-        
-        # Store preference in mem0 using structured schema
-        result = memory_manager.add_structured_memory(
-            user_id=user_id,
-            category="preference",
-            content=preference,
-            memory_type=preference_type,
-            metadata={"extracted_at": datetime.now().isoformat()}
-        )
-        
-        print(f"[PREF] Storage result: {result}")
-        return {
-            "success": True,
-            "preference": preference,
-            "preference_type": preference_type,
-            "stored": bool(result and "error" not in result),
-            "confirmation": confirmation_msg
-        }
+            # Could not categorize - don't store it
+            return {
+                "success": False,
+                "preference": preference,
+                "preference_type": None,
+                "stored": False,
+                "confirmation": f"I couldn't understand that preference clearly. Could you be more specific? For example: 'I prefer window seats', 'I like morning flights', 'I want business class', etc."
+            }
     
     return {"error": "Unknown tool"}
 
@@ -562,6 +605,7 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
             "routes": "🗺️ Favorite Routes",
             "budget": "💰 Budget",
             "trip_type": "✈️ Trip Type",
+            "location": "📍 Home Location",
             "other": "📋 Other"
         }
         
@@ -584,8 +628,8 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
                         .replace("prefers", "")
                         .strip())
                     
-                    # Skip very generic terms
-                    if item_text.lower() in ["seat", "airline", "preference", "type"]:
+                    # Skip very generic terms and "general"
+                    if item_text.lower() in ["seat", "airline", "preference", "type", "general"]:
                         continue
                     
                     # Capitalize first letter if needed
@@ -616,6 +660,24 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
         }
     
     system_prompt = get_system_prompt_with_memory(user_id)
+    
+    # Extract last flight search context if user is expressing new preferences
+    extracted_prefs = extract_preferences_from_message(user_message)
+    if extracted_prefs and conversation_history:
+        # Look for previous flight search in conversation history
+        last_search_context = None
+        for msg in reversed(conversation_history[-10:]):
+            content = msg.get("content", "").lower()
+            # Look for mentions of airports/routes
+            if any(word in content for word in ["houston", "kathmandu", "hyderabad", "new york", "iath", "ktm", "hyd", "jfk"]):
+                if any(word in content for word in ["search", "find", "flight", "from", "to"]):
+                    last_search_context = msg.get("content", "")
+                    break
+        
+        if last_search_context:
+            system_prompt += "\n\nRECENT SEARCH CONTEXT:\n"
+            system_prompt += f"The user recently searched for: {last_search_context}\n"
+            system_prompt += "Since they've expressed a NEW PREFERENCE, you MUST re-search using the same route/dates but with their updated preference."
     
     messages = [{"role": "system", "content": system_prompt}]
     

@@ -36,32 +36,6 @@ export function FlightCard({ flight, index }: FlightCardProps) {
   const lastSegment = outbound.segments[outbound.segments.length - 1];
   const stops = outbound.segments.length - 1;
 
-  const getTagVariant = (tag: string) => {
-    switch (tag) {
-      case "cheapest":
-        return "default";
-      case "fastest":
-        return "secondary";
-      case "best":
-        return "outline";
-      default:
-        return "secondary";
-    }
-  };
-
-  const getTagLabel = (tag: string) => {
-    switch (tag) {
-      case "cheapest":
-        return "Cheapest";
-      case "fastest":
-        return "Fastest";
-      case "best":
-        return "Best Value";
-      default:
-        return tag;
-    }
-  };
-
   const buildBookingUrl = (website: string): string => {
     const origin = firstSegment.departure.iataCode;
     const destination = lastSegment.arrival.iataCode;
@@ -118,16 +92,6 @@ export function FlightCard({ flight, index }: FlightCardProps) {
     >
       <CardContent className="p-4 md:p-6">
         <div className="flex flex-col gap-4">
-          {flight.tags && flight.tags.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {flight.tags.map((tag) => (
-                <Badge key={tag} variant={getTagVariant(tag)} size="sm">
-                  {getTagLabel(tag)}
-                </Badge>
-              ))}
-            </div>
-          )}
-
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="flex flex-1 flex-col gap-4">
               <div className="flex items-center gap-4">

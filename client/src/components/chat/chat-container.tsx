@@ -66,11 +66,17 @@ export function ChatContainer({ messages, isLoading }: ChatContainerProps) {
           {messages.map((message) => (
             <MessageBubble 
               key={message.id} 
-              message={message}
+              message={{
+                ...message,
+                flightResults: showFilter && filteredFlights && currentFlights === message.flightResults
+                  ? filteredFlights
+                  : message.flightResults
+              }}
               userAvatar={user?.avatar}
               onShowFilter={() => {
                 setCurrentFlights(message.flightResults || null);
                 setShowFilter(true);
+                setFilteredFlights(null);
               }}
             />
           ))}

@@ -547,6 +547,11 @@ async def get_user_preferences(current_user: dict = Depends(get_current_user)):
     from memory_manager import memory_manager
     try:
         preferences = memory_manager.summarize_preferences(current_user["id"], include_ids=True)
+        
+        # Filter out "general" type preferences (they shouldn't exist with new code, but clean up old ones)
+        if "general" in preferences:
+            preferences.pop("general", None)
+        
         return {
             "userId": current_user["id"],
             "preferences": preferences,

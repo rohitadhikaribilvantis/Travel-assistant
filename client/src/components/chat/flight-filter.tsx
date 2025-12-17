@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X, ChevronDown } from "lucide-react";
+import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
@@ -15,9 +15,8 @@ interface FlightFilterProps {
 
 export function FlightFilter({ flights, onFilter, onClose }: FlightFilterProps) {
   const [priceRange, setPriceRange] = useState<[number, number]>([0, 5000]);
-  const [maxStops, setMaxStops] = useState<number | null>(null);
+  const [maxStops, setMaxStops] = useState<Set<number>>(new Set());
   const [selectedAirlines, setSelectedAirlines] = useState<Set<string>>(new Set());
-  const [departureTime, setDepartureTime] = useState<string | null>(null);
 
   // Extract unique airlines from flights
   const airlines = Array.from(
@@ -27,6 +26,26 @@ export function FlightFilter({ flights, onFilter, onClose }: FlightFilterProps) 
       )
     )
   ).sort();
+
+  // Sort flights by preference: best > cheapest > fastest > rest
+  const sortFlights = (flightsToSort: FlightOffer[]) => {
+    return [...flightsToSort].sort((a, b) => {
+      const aTagPriority = getTagPriority(a.tags);
+      const bTagPriority = getTagPriority(b.tags);
+      if (aTagPriority !== bTagPriority) {
+        return aTagPriority - bTagPriority;
+      }
+      return 0;
+    });
+  };
+
+  const getTagPriority = (tags?: string[]) => {
+    if (!tags || tags.length === 0) return 999;
+    if (tags.includes("best")) return 1;
+    if (tags.includes("cheapest")) return 2;
+    if (tags.includes("fastest")) return 3;
+    return 999;
+  };
 
   // Apply filters
   const applyFilters = () => {
@@ -39,11 +58,14 @@ export function FlightFilter({ flights, onFilter, onClose }: FlightFilterProps) 
         parseFloat(f.price.total) <= priceRange[1]
     );
 
-    // Filter by max stops
-    if (maxStops !== null) {
-      filtered = filtered.filter((f) =>
-        f.itineraries.every((itin) => itin.segments.length - 1 <= maxStops)
-      );
+    // Filter by max stops - allow multiple selections
+    if (maxStops.size > 0) {
+      filtered = filtered.filter((f) => {
+        const flightStops = f.itineraries[0].segments.length - 1;
+        return Array.from(maxStops).some((selectedStops) => 
+          selectedStops === 2 ? flightStops >= 2 : flightStops <= selectedStops
+        );
+      });
     }
 
     // Filter by airlines
@@ -55,37 +77,19 @@ export function FlightFilter({ flights, onFilter, onClose }: FlightFilterProps) 
       );
     }
 
-    // Filter by departure time
-    if (departureTime) {
-      const [minHour, maxHour] = getDepartureTimeRange(departureTime);
-      filtered = filtered.filter((f) => {
-        const firstSegment = f.itineraries[0].segments[0];
-        const departTime = new Date(firstSegment.departure.at);
-        const hour = departTime.getHours();
-        return hour >= minHour && hour < maxHour;
-      });
-    }
-
-    onFilter(filtered);
+    // Sort results
+    const sorted = sortFlights(filtered);
+    onFilter(sorted);
   };
 
-  const getDepartureTimeRange = (
-    time: string
-  ): [number, number] => {
-    switch (time) {
-      case "early-morning":
-        return [5, 9];
-      case "morning":
-        return [9, 12];
-      case "afternoon":
-        return [12, 17];
-      case "evening":
-        return [17, 21];
-      case "night":
-        return [21, 5];
-      default:
-        return [0, 24];
+  const handleStopsToggle = (stops: number) => {
+    const newSet = new Set(maxStops);
+    if (newSet.has(stops)) {
+      newSet.delete(stops);
+    } else {
+      newSet.add(stops);
     }
+    setMaxStops(newSet);
   };
 
   const handleAirlineToggle = (airline: string) => {
@@ -100,10 +104,10 @@ export function FlightFilter({ flights, onFilter, onClose }: FlightFilterProps) 
 
   const resetFilters = () => {
     setPriceRange([0, 5000]);
-    setMaxStops(null);
+    setMaxStops(new Set());
     setSelectedAirlines(new Set());
-    setDepartureTime(null);
-    onFilter(flights);
+    const sorted = sortFlights(flights);
+    onFilter(sorted);
   };
 
   const maxPrice = Math.max(...flights.map((f) => parseFloat(f.price.total)));
@@ -125,17 +129,32 @@ export function FlightFilter({ flights, onFilter, onClose }: FlightFilterProps) 
       <div className="space-y-4 max-h-[600px] overflow-y-auto">
         {/* Price Filter */}
         <div>
-          <Label className="text-xs font-semibold mb-2 block">
-            Price Range: ${priceRange[0]} - ${priceRange[1]}
-          </Label>
-          <Slider
-            value={priceRange}
-            onValueChange={setPriceRange}
-            min={0}
-            max={maxPrice}
-            step={100}
-            className="w-full"
-          />
+          <div className="flex items-center justify-between mb-3">
+            <Label className="text-xs font-semibold">Min: ${priceRange[0]}</Label>
+            <Label className="text-xs font-semibold">Max: ${priceRange[1]}</Label>
+          </div>
+          <div className="space-y-2">
+            <Slider
+              value={[priceRange[0]]}
+              onValueChange={(value) =>
+                setPriceRange([Math.min(value[0], priceRange[1]), priceRange[1]])
+              }
+              min={0}
+              max={maxPrice}
+              step={50}
+              className="w-full"
+            />
+            <Slider
+              value={[priceRange[1]]}
+              onValueChange={(value) =>
+                setPriceRange([priceRange[0], Math.max(value[0], priceRange[0])])
+              }
+              min={0}
+              max={maxPrice}
+              step={50}
+              className="w-full"
+            />
+          </div>
         </div>
 
         {/* Stops Filter */}
@@ -150,43 +169,10 @@ export function FlightFilter({ flights, onFilter, onClose }: FlightFilterProps) 
               <div key={option.value} className="flex items-center gap-2">
                 <Checkbox
                   id={`stops-${option.value}`}
-                  checked={maxStops === option.value}
-                  onCheckedChange={() =>
-                    setMaxStops(maxStops === option.value ? null : option.value)
-                  }
+                  checked={maxStops.has(option.value)}
+                  onCheckedChange={() => handleStopsToggle(option.value)}
                 />
                 <Label htmlFor={`stops-${option.value}`} className="text-xs cursor-pointer">
-                  {option.label}
-                </Label>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Departure Time */}
-        <div>
-          <Label className="text-xs font-semibold mb-2 block">
-            Departure Time
-          </Label>
-          <div className="space-y-2">
-            {[
-              { value: "early-morning", label: "Early Morning (5am-9am)" },
-              { value: "morning", label: "Morning (9am-12pm)" },
-              { value: "afternoon", label: "Afternoon (12pm-5pm)" },
-              { value: "evening", label: "Evening (5pm-9pm)" },
-              { value: "night", label: "Night (9pm-5am)" },
-            ].map((option) => (
-              <div key={option.value} className="flex items-center gap-2">
-                <Checkbox
-                  id={`time-${option.value}`}
-                  checked={departureTime === option.value}
-                  onCheckedChange={() =>
-                    setDepartureTime(
-                      departureTime === option.value ? null : option.value
-                    )
-                  }
-                />
-                <Label htmlFor={`time-${option.value}`} className="text-xs cursor-pointer">
                   {option.label}
                 </Label>
               </div>

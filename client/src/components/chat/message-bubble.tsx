@@ -23,6 +23,47 @@ export function MessageBubble({ message, userAvatar, onShowFilter }: MessageBubb
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   };
 
+  // Group flights by tag category
+  const groupFlightsByTag = (flights: typeof message.flightResults) => {
+    if (!flights) return {};
+    
+    const groups: { [key: string]: typeof flights } = {
+      cheapest: [],
+      best: [],
+      fastest: [],
+      other: []
+    };
+
+    flights.forEach((flight) => {
+      if (flight.tags?.includes("cheapest")) {
+        groups.cheapest.push(flight);
+      } else if (flight.tags?.includes("best")) {
+        groups.best.push(flight);
+      } else if (flight.tags?.includes("fastest")) {
+        groups.fastest.push(flight);
+      } else {
+        groups.other.push(flight);
+      }
+    });
+
+    return groups;
+  };
+
+  const getCategoryLabel = (category: string) => {
+    switch (category) {
+      case "cheapest":
+        return "💰 Cheapest";
+      case "best":
+        return "🏆 Best Value";
+      case "fastest":
+        return "⚡ Fastest";
+      case "other":
+        return "Other Options";
+      default:
+        return category;
+    }
+  };
+
   return (
     <div
       className={cn(
@@ -97,7 +138,7 @@ export function MessageBubble({ message, userAvatar, onShowFilter }: MessageBubb
         </div>
 
         {hasFlights && (
-          <div className="mt-2 w-full space-y-3">
+          <div className="mt-2 w-full space-y-4">
             {/* Filter Button */}
             {onShowFilter && (
               <Button
@@ -111,12 +152,33 @@ export function MessageBubble({ message, userAvatar, onShowFilter }: MessageBubb
               </Button>
             )}
 
-            {/* Flight Cards */}
-            <div className="flex w-full flex-col gap-4">
-              {message.flightResults!.map((flight, index) => (
-                <FlightCard key={flight.id} flight={flight} index={index} />
-              ))}
-            </div>
+            {/* Grouped Flight Cards */}
+            {(() => {
+              const flightGroups = groupFlightsByTag(message.flightResults);
+              const categoryOrder = ["best", "cheapest", "fastest", "other"];
+              
+              return (
+                <div className="space-y-6">
+                  {categoryOrder.map((category) => {
+                    const flights = flightGroups[category];
+                    if (!flights || flights.length === 0) return null;
+                    
+                    return (
+                      <div key={category} className="space-y-3">
+                        <h3 className="text-sm font-semibold text-muted-foreground">
+                          {getCategoryLabel(category)}
+                        </h3>
+                        <div className="flex flex-col gap-4">
+                          {flights.map((flight, index) => (
+                            <FlightCard key={`${flight.id}-${index}`} flight={flight} index={index} />
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         )}
 

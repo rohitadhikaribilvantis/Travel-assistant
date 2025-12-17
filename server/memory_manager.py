@@ -3,7 +3,7 @@ from typing import Optional, List, Dict, Literal
 from datetime import datetime
 
 # Memory Schema Types
-PreferenceType = Literal["seat", "airline", "departure_time", "flight_type", "cabin_class", "red_eye", "baggage", "general"]
+PreferenceType = Literal["seat", "airline", "departure_time", "flight_type", "cabin_class", "red_eye", "baggage"]
 MemoryCategory = Literal["preference", "travel_history", "route", "airline", "budget"]
 
 class TravelMemory:
@@ -34,7 +34,11 @@ class TravelMemory:
     def format_message(self) -> str:
         """Format memory as natural language for mem0."""
         if self.category == "preference":
-            return f"Travel Preference: {self.content} (Type: {self.memory_type})"
+            # Only show type if it's not "general" (general is unhelpful)
+            if self.memory_type and self.memory_type != "general":
+                return f"Travel Preference: {self.content} (Type: {self.memory_type})"
+            else:
+                return f"Travel Preference: {self.content}"
         elif self.category == "travel_history":
             return f"Travel History: {self.content}"
         elif self.category == "route":
@@ -112,10 +116,22 @@ class TravelMemoryManager:
             else:
                 memories = results if isinstance(results, list) else []
             
-            print(f"[MEMORY] Retrieved {len(memories)} memories for user {user_id}")
-            if memories:
-                print(f"[MEMORY] Sample memory structure: {memories[0] if memories else 'None'}")
-            return memories
+            # Filter out "general" type memories (old/confusing ones we don't want to display)
+            filtered_memories = [
+                m for m in memories
+                if not (isinstance(m, dict) and m.get("type") == "general")
+                and not (isinstance(m, dict) and "Type: General" in str(m.get("memory", "")))
+            ]
+            
+            # Clean up memory text by removing " for general" suffix
+            for mem in filtered_memories:
+                if isinstance(mem, dict) and "memory" in mem:
+                    mem["memory"] = mem["memory"].replace(" for general", "").strip()
+            
+            print(f"[MEMORY] Retrieved {len(filtered_memories)} memories for user {user_id} (filtered from {len(memories)})")
+            if filtered_memories:
+                print(f"[MEMORY] Sample memory structure: {filtered_memories[0] if filtered_memories else 'None'}")
+            return filtered_memories
         except Exception as e:
             print(f"[MEMORY ERROR] Error retrieving memories for user {user_id}: {e}")
             import traceback
@@ -237,6 +253,14 @@ class TravelMemoryManager:
             for mem in memories:
                 memory_text = mem.get("memory", "") if isinstance(mem, dict) else str(mem)
                 if not memory_text:
+                    continue
+                
+                # Clean up " for general" suffix from memory text
+                memory_text = memory_text.replace(" for general", "").strip()
+                
+                # Skip "general" type preferences
+                if "Type: General" in memory_text or memory_text.startswith("Travel Preference Type:"):
+                    print(f"[CONTEXT] Skipping general preference: '{memory_text}'")
                     continue
                     
                 if "preference" in memory_text.lower() or any(word in memory_text.lower() for word in ["prefer", "like", "avoid", "hate", "always", "never"]):
@@ -374,12 +398,21 @@ class TravelMemoryManager:
                 "baggage": [],
                 "routes": [],
                 "budget": [],
+                "location": [],
                 "other": []
             }
             
             for mem in all_memories:
                 memory_text = mem.get("memory", "") if isinstance(mem, dict) else str(mem)
                 if not memory_text:
+                    continue
+                
+                # Clean up " for general" suffix
+                memory_text = memory_text.replace(" for general", "").strip()
+                
+                # Skip "general" type preferences (old/confusing entries)
+                if "Type: General" in memory_text or memory_text.startswith("Travel Preference Type:"):
+                    print(f"[MEMORY] Skipping general preference: '{memory_text}'")
                     continue
                 
                 memory_id = mem.get("id", None) if isinstance(mem, dict) else None
@@ -425,6 +458,9 @@ class TravelMemoryManager:
                     # Only add specific budget preferences (e.g., "max $500"), skip generic "budget-conscious"
                     print(f"  -> Categorized as BUDGET")
                     summary["budget"].append(entry)
+                elif any(word in memory_lower for word in ["live", "based", "from", "home"]) and any(word in memory_lower for word in ["houston", "newyork", "los angeles", "london", "paris", "tokyo", "delhi", "mumbai", "kathmandu", "beijing", "chicago", "miami", "seattle", "boston", "denver", "dallas", "austin", "sanfrancisco"]):
+                    print(f"  -> Categorized as LOCATION")
+                    summary["location"].append(entry)
                 elif any(word in memory_lower for word in ["route", "traveled", "booked", "flight"]):
                     print(f"  -> Categorized as ROUTE")
                     summary["routes"].append(entry)
@@ -471,8 +507,7 @@ class TravelMemoryManager:
     
     def clear_all_preferences(self, user_id: str) -> Dict:
         """
-        Clear all preferences for a user using delete_all() with user_id filter.
-        Falls back to individual deletion if needed.
+        Clear only preference-type memories for a user, keeping travel history and other memories.
         
         Args:
             user_id: The user identifier
@@ -480,45 +515,51 @@ class TravelMemoryManager:
         Returns:
             Result with count of deleted preferences
         """
-        print(f"[MEMORY] Clearing all preferences for user {user_id}")
+        print(f"[MEMORY] Clearing all preferences (but NOT all memories) for user {user_id}")
         memory = self._get_memory()
         if not memory:
             print(f"[MEMORY ERROR] mem0 not available")
             return {"error": "Memory system not available"}
         
         try:
-            # Try using delete_all() method with user_id filter first
-            print(f"[MEMORY] Attempting to delete all memories for user {user_id} using delete_all()")
-            try:
-                result = memory.delete_all(user_id=user_id)
-                print(f"[MEMORY] delete_all() succeeded: {result}")
-                return {"success": True, "result": result, "method": "delete_all"}
-            except Exception as e:
-                print(f"[MEMORY] delete_all() failed: {e}, falling back to individual deletion")
-            
-            # Fallback: Get all memories and delete them individually
+            # Get all memories and delete only those that are preferences
             all_memories = self.get_user_memories(user_id)
-            print(f"[MEMORY] Found {len(all_memories)} memories to clear via individual deletion")
+            print(f"[MEMORY] Found {len(all_memories)} total memories for user {user_id}")
             
             deleted_count = 0
+            skipped_count = 0
+            
             for mem in all_memories:
                 memory_text = mem.get("memory", "") if isinstance(mem, dict) else str(mem)
                 memory_id = mem.get("id") if isinstance(mem, dict) else None
+                memory_category = mem.get("category") if isinstance(mem, dict) else None
+                memory_type = mem.get("type") if isinstance(mem, dict) else None
                 
-                print(f"[MEMORY] Attempting to delete: {memory_text} (ID: {memory_id})")
+                # STRICT: Only delete if category is explicitly "preference"
+                # This ensures we never accidentally delete travel history, logs, or other memory types
+                is_preference = memory_category == "preference"
                 
-                # Try deletion by ID
-                if memory_id:
-                    result = self.delete_memory(user_id, memory_id)
-                    if "success" in result and result["success"]:
-                        deleted_count += 1
-                        print(f"[MEMORY] Successfully deleted memory ID {memory_id}")
-                        continue
-                    else:
-                        print(f"[MEMORY] Failed to delete memory ID {memory_id}: {result}")
+                if is_preference:
+                    print(f"[MEMORY] Deleting preference: {memory_text} (ID: {memory_id}, Category: {memory_category})")
+                    
+                    # Try deletion by ID
+                    if memory_id:
+                        result = self.delete_memory(user_id, memory_id)
+                        if "success" in result and result["success"]:
+                            deleted_count += 1
+                            print(f"[MEMORY] Successfully deleted preference ID {memory_id}")
+                else:
+                    # Keep non-preference memories like travel history, logs, etc.
+                    print(f"[MEMORY] Keeping memory (Category: {memory_category}): {memory_text}")
+                    skipped_count += 1
             
-            print(f"[MEMORY] Cleared {deleted_count} preferences for user {user_id}")
-            return {"success": True, "deleted_count": deleted_count, "method": "individual_deletion"}
+            print(f"[MEMORY] Preference deletion complete: {deleted_count} deleted, {skipped_count} kept")
+            return {
+                "success": True,
+                "deleted": deleted_count,
+                "kept": skipped_count,
+                "method": "selective_deletion"
+            }
         except Exception as e:
             print(f"[MEMORY ERROR] Error clearing preferences for user {user_id}: {e}")
             import traceback

@@ -139,7 +139,8 @@ export function useMemory(userId?: string, refreshTrigger?: number) {
     if (!preferences) return [];
 
     const allPrefs: StoredPreference[] = [];
-    const categories = ["seat", "airline", "departure_time", "flight_type", "cabin_class", "red_eye", "baggage", "general"] as const;
+    // Exclude "general" category from display
+    const categories = ["seat", "airline", "departure_time", "flight_type", "cabin_class", "red_eye", "baggage"] as const;
 
     categories.forEach((category) => {
       const values = preferences[category] || [];
