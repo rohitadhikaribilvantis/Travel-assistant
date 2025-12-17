@@ -41,6 +41,7 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
   const effectiveRefreshTrigger = externalRefreshTrigger !== 0 ? externalRefreshTrigger : refreshTrigger;
   const { preferences: memoryPreferences, refreshPreferences, isLoadingPreferences, removePreference, isRemovingPreference } = useMemory(user?.id, effectiveRefreshTrigger);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [travelHistoryOpen, setTravelHistoryOpen] = useState(false);
   const [directFlightsOnly, setDirectFlightsOnly] = useState(false);
   const [avoidRedEye, setAvoidRedEye] = useState(false);
   const [preferredTime, setPreferredTime] = useState<string>("");
@@ -600,6 +601,41 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
                       </button>
                     </div>                  ))}
                 </div>
+              </div>
+            </div>
+          </SheetContent>
+        </Sheet>
+
+        {/* Travel History Sheet */}
+        <Sheet open={travelHistoryOpen} onOpenChange={setTravelHistoryOpen}>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setTravelHistoryOpen(true)}
+            title="Travel History"
+          >
+            📚
+            <span className="sr-only">Travel History</span>
+          </Button>
+          <SheetContent side="right" className="w-full sm:w-[500px] overflow-y-auto">
+            <SheetHeader>
+              <SheetTitle className="text-2xl font-bold">📚 Travel History</SheetTitle>
+            </SheetHeader>
+            
+            <div className="space-y-6 py-6">
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold">📍 Frequently Used Routes</h3>
+                <p className="text-sm text-muted-foreground">Your most traveled routes will appear here</p>
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold">🎫 Previously Booked Flights</h3>
+                <p className="text-sm text-muted-foreground">Your booking history will appear here</p>
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold">⏱️ Duration Preferences</h3>
+                <p className="text-sm text-muted-foreground">Your preferred trip durations will appear here</p>
               </div>
             </div>
           </SheetContent>

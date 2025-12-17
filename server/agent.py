@@ -430,67 +430,23 @@ def execute_tool(tool_name: str, arguments: dict, user_id: str) -> dict:
     
     elif tool_name == "remember_preference":
         preference = arguments.get("preference", "")
-        print(f"[PREF] Storing preference for user {user_id}: {preference}")
+        print(f"[PREF] Storing preference: {preference}")
         
-        # Extract preference type from the preference text
-        preference_lower = preference.lower()
+        # Store the preference directly
+        result = memory_manager.add_structured_memory(
+            user_id=user_id,
+            category="preference",
+            content=preference,
+            memory_type="general",
+            metadata={"extracted_at": datetime.now().isoformat()}
+        )
         
-        # Categorize the preference
-        preference_type = None
-        confirmation_msg = None
-        
-        if any(word in preference_lower for word in ["seat", "window", "aisle", "middle", "exit row", "solo", "alone", "single", "travelling alone"]):
-            preference_type = "seat"
-            confirmation_msg = f"Got it! I'll remember your preference for {preference}."
-        elif any(word in preference_lower for word in ["airline", "united", "delta", "american", "southwest"]):
-            preference_type = "airline"
-            confirmation_msg = f"Perfect! I'll keep your airline preference in mind: {preference}"
-        elif any(word in preference_lower for word in ["morning", "evening", "afternoon", "time", "depart"]):
-            preference_type = "departure_time"
-            confirmation_msg = f"Great! I'll prioritize {preference} for your future searches."
-        elif any(word in preference_lower for word in ["direct", "non-stop", "layover", "stop"]):
-            preference_type = "flight_type"
-            confirmation_msg = f"Perfect! I'll apply {preference} to all future flight searches."
-        elif any(word in preference_lower for word in ["business", "economy", "premium", "first class"]):
-            preference_type = "cabin_class"
-            confirmation_msg = f"Understood! I'll search for {preference} flights in the future."
-        elif any(word in preference_lower for word in ["red-eye", "night", "avoid", "aversion"]):
-            preference_type = "red_eye"
-            confirmation_msg = f"Got it! I'll avoid red-eye flights for you in future searches."
-        elif any(word in preference_lower for word in ["baggage", "luggage", "bag"]):
-            preference_type = "baggage"
-            confirmation_msg = f"Noted! I'll remember your baggage preference."
-        
-        # Only store if we could categorize it properly
-        if preference_type:
-            print(f"[PREF] Categorized as: {preference_type}")
-            
-            # Store preference in mem0 using structured schema
-            result = memory_manager.add_structured_memory(
-                user_id=user_id,
-                category="preference",
-                content=preference,
-                memory_type=preference_type,
-                metadata={"extracted_at": datetime.now().isoformat()}
-            )
-            
-            print(f"[PREF] Storage result: {result}")
-            return {
-                "success": True,
-                "preference": preference,
-                "preference_type": preference_type,
-                "stored": bool(result and "error" not in result),
-                "confirmation": confirmation_msg
-            }
-        else:
-            # Could not categorize - don't store it
-            return {
-                "success": False,
-                "preference": preference,
-                "preference_type": None,
-                "stored": False,
-                "confirmation": f"I couldn't understand that preference clearly. Could you be more specific? For example: 'I prefer window seats', 'I like morning flights', 'I want business class', etc."
-            }
+        return {
+            "success": True,
+            "preference": preference,
+            "stored": bool(result),
+            "confirmation": f"I'll remember: {preference}"
+        }
     
     return {"error": "Unknown tool"}
 

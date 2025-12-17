@@ -37,53 +37,44 @@ export function FlightCard({ flight, index }: FlightCardProps) {
   const stops = outbound.segments.length - 1;
 
   const buildBookingUrl = (website: string): string => {
-    const origin = firstSegment.departure.iataCode;
-    const destination = lastSegment.arrival.iataCode;
-    const departDate = firstSegment.departure.at.split("T")[0];
-    const returnDate = returnFlight ? returnFlight.segments[returnFlight.segments.length - 1].arrival.at.split("T")[0] : null;
-    const departTime = firstSegment.departure.at.split("T")[1]?.substring(0, 5);
-    const arrivalTime = lastSegment.arrival.at.split("T")[1]?.substring(0, 5);
     const carrier = firstSegment.carrierCode;
-    const flightNumber = firstSegment.number;
-    const cabin = flight.travelClass?.toLowerCase() || "economy";
     
-    // Format dates as YYYYMMDD for Google Flights
-    const departDateFormatted = departDate.replace(/-/g, "");
-    const returnDateFormatted = returnDate ? returnDate.replace(/-/g, "") : "";
-    
-    // Google Flights URL parameters
-    // Format: /flights?tfs=origin destination departdate [return date] etc
-    let googleFlightsUrl = `https://www.google.com/flights?`;
-    googleFlightsUrl += `hl=en&`;
-    googleFlightsUrl += `curr=${flight.price.currency || "USD"}&`;
-    
-    // Add flight leg parameters
-    if (returnDate) {
-      // Round trip: tfs=origin destination departdate return airlinefilter
-      googleFlightsUrl += `tfs=from:${origin},to:${destination},departure:${departDate}&`;
-      googleFlightsUrl += `tfs=from:${destination},to:${origin},departure:${returnDate}`;
-    } else {
-      // One-way: just single tfs parameter
-      googleFlightsUrl += `tfs=from:${origin},to:${destination},departure:${departDate}`;
-    }
-    
-    // Add cabin class if available
-    if (cabin && cabin !== "economy") {
-      googleFlightsUrl += `&cabinclass=${cabin === "business" ? "b" : cabin === "first" ? "f" : "p"}`;
-    }
-    
-    const baseUrls = {
-      google: googleFlightsUrl,
-      skyscanner: `https://www.skyscanner.com/transport/flights/${origin}/${destination}/${departDate}?adultsv2=1&cabinclass=${cabin}`,
-      kayak: `https://www.kayak.com/flights/${origin}-${destination}/${departDate}?a=${carrier}`,
-      expedia: `https://www.expedia.com/Flights-Search?trip=oneway&leg1=from:${origin},to:${destination},departure:${departDate}&passengers=1&cabin=${cabin}`,
+    // Airline-specific booking homepage URLs (simple and reliable)
+    const airlineUrls: Record<string, string> = {
+      "UA": "https://www.united.com",
+      "AA": "https://www.aa.com",
+      "DL": "https://www.delta.com",
+      "SW": "https://www.southwest.com",
+      "B6": "https://www.jetblue.com",
+      "AS": "https://www.alaskaair.com",
+      "NK": "https://www.spirit.com",
+      "F9": "https://www.frontier.com",
+      "AC": "https://www.aircanada.com",
+      "BA": "https://www.britishairways.com",
+      "LH": "https://www.lufthansa.com",
+      "AF": "https://www.airfrance.com",
+      "KL": "https://www.klm.com",
+      "IB": "https://www.iberia.com",
+      "EK": "https://www.emirates.com",
+      "QF": "https://www.qantas.com",
+      "SQ": "https://www.singaporeair.com",
+      "NH": "https://www.ana.co.jp/en",
+      "JL": "https://www.jal.co.jp/en",
     };
-    return baseUrls[website as keyof typeof baseUrls] || baseUrls.google;
+    
+    // Return airline-specific URL if available
+    return airlineUrls[carrier] || `https://www.${carrier.toLowerCase()}.com`;
   };
 
-  const websites = [
-    { name: "Google Flights", key: "google" },
-  ];
+  // Get airline name for button text
+  const getAirlineDisplay = (): { name: string; code: string } => {
+    return {
+      code: firstSegment.carrierCode,
+      name: firstSegment.carrierName || firstSegment.carrierCode
+    };
+  };
+
+  const airlineDisplay = getAirlineDisplay();
 
   return (
     <Card
@@ -210,10 +201,10 @@ export function FlightCard({ flight, index }: FlightCardProps) {
               <div className="mt-2 flex w-full flex-col gap-2 md:w-auto">
                 <Button
                   size="sm"
-                  onClick={() => window.open(buildBookingUrl("google"), "_blank")}
+                  onClick={() => window.open(buildBookingUrl("airline"), "_blank")}
                   className="flex items-center gap-1"
                 >
-                  Book on Google Flights
+                  Book with {airlineDisplay.name}
                   <ExternalLink className="h-3 w-3" />
                 </Button>
               </div>
