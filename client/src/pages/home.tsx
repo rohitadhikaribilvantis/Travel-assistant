@@ -18,6 +18,7 @@ export default function Home() {
   const { token } = useAuth();
   const {
     messages,
+    setMessages,
     isLoading,
     sendMessage,
     clearChat,
@@ -34,7 +35,66 @@ export default function Home() {
   const [isLoadingConversation, setIsLoadingConversation] = useState(false);
   const [preferencesRefreshTrigger, setPreferencesRefreshTrigger] = useState(0);
   const [currentPreferences, setCurrentPreferences] = useState<CurrentPreferences>({});
+  const [refreshBookingsFn, setRefreshBookingsFn] = useState<(() => void) | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Create a wrapper for refreshBookingsFn that also updates travel history in chat
+  const createRefreshBookingsWrapper = useCallback((refreshFn: () => void) => {
+    return async () => {
+      console.log("[REFRESH] Starting refresh wrapper");
+      // Call the original refresh function
+      refreshFn();
+      
+      // Fetch fresh travel history from server
+      if (token) {
+        try {
+          console.log("[REFRESH] Fetching fresh travel history");
+          const response = await fetch("http://localhost:8000/api/memory/travel-history", {
+            headers: { "Authorization": `Bearer ${token}` }
+          });
+          const travelHistoryData = await response.json();
+          console.log("[REFRESH] Travel history response:", travelHistoryData);
+          
+          // Update the messages to include fresh travel history
+          setMessages((prevMessages) => {
+            console.log("[REFRESH] Current messages count:", prevMessages.length);
+            // Find or create a "travel history" message
+            const updatedMessages = [...prevMessages];
+            
+            // Look for the last assistant message that might have travel history
+            let lastAssistantIndex = -1;
+            for (let i = updatedMessages.length - 1; i >= 0; i--) {
+              if (updatedMessages[i].role === "assistant") {
+                lastAssistantIndex = i;
+                break;
+              }
+            }
+            
+            console.log("[REFRESH] Last assistant message index:", lastAssistantIndex);
+            
+            // If there's an assistant message, update its travel history
+            if (lastAssistantIndex >= 0) {
+              updatedMessages[lastAssistantIndex] = {
+                ...updatedMessages[lastAssistantIndex],
+                travelHistory: travelHistoryData.history || []
+              };
+              console.log("[REFRESH] Updated message with travel history, new count:", travelHistoryData.history?.length);
+            }
+            
+            return updatedMessages;
+          });
+        } catch (error) {
+          console.error("Error fetching travel history after booking:", error);
+        }
+      }
+    };
+  }, [token]);
+
+  // Update the refreshBookingsFn when chat-header passes the original function
+  const handleRefreshBookings = useCallback((refreshFn: () => void) => {
+    const wrappedFn = createRefreshBookingsWrapper(refreshFn);
+    setRefreshBookingsFn(() => wrappedFn);
+  }, [createRefreshBookingsWrapper]);
 
   // Trigger preference refresh after each message
   useEffect(() => {
@@ -335,8 +395,9 @@ export default function Home() {
           onPreferencesRefresh={() => setPreferencesRefreshTrigger(prev => prev + 1)}
           externalRefreshTrigger={preferencesRefreshTrigger}
           onPreferencesChange={setCurrentPreferences}
+          onRefreshBookings={handleRefreshBookings}
         />
-        <ChatContainer messages={messages} isLoading={isLoading} />
+        <ChatContainer messages={messages} isLoading={isLoading} onBooking={refreshBookingsFn || undefined} />
         <ChatInput onSendMessage={sendMessage} isLoading={isLoading} messages={messages} currentPreferences={currentPreferences} />
       </div>
     </div>

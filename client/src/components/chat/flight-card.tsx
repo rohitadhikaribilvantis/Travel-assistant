@@ -3,10 +3,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { FlightOffer } from "@shared/schema";
+import { useAuth } from "@/hooks/use-auth";
 
 interface FlightCardProps {
   flight: FlightOffer;
   index: number;
+  onBooking?: () => void;
 }
 
 function formatDuration(duration: string): string {
@@ -29,7 +31,8 @@ function formatDate(dateTimeString: string): string {
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-export function FlightCard({ flight, index }: FlightCardProps) {
+export function FlightCard({ flight, index, onBooking }: FlightCardProps) {
+  const { token } = useAuth();
   const outbound = flight.itineraries[0];
   const returnFlight = flight.itineraries[1];
   const firstSegment = outbound.segments[0];
@@ -72,6 +75,52 @@ export function FlightCard({ flight, index }: FlightCardProps) {
       code: firstSegment.carrierCode,
       name: firstSegment.carrierName || firstSegment.carrierCode
     };
+  };
+
+  const handleBookClick = async () => {
+    console.log("[BOOKING] Book clicked for flight:", firstSegment.carrierCode);
+    
+    // Record booking
+    if (token) {
+      try {
+        console.log("[BOOKING] Sending POST to record-booking endpoint");
+        const response = await fetch("http://localhost:8000/api/memory/record-booking", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            origin: firstSegment.departure.iataCode,
+            destination: lastSegment.arrival.iataCode,
+            airline: firstSegment.carrierCode,
+            airline_name: firstSegment.carrierName || firstSegment.carrierCode,
+            departure_date: firstSegment.departure.at.split("T")[0],
+            departure_time: formatTime(firstSegment.departure.at),
+            arrival_time: formatTime(lastSegment.arrival.at),
+            cabin_class: flight.travelClass?.replace("_", " ") || "economy",
+            price: parseFloat(flight.price.total),
+            currency: flight.price.currency
+          })
+        });
+        console.log("[BOOKING] Record-booking response:", response.status, await response.json());
+      } catch (error) {
+        console.error("[BOOKING] Failed to record booking:", error);
+      }
+    } else {
+      console.log("[BOOKING] No token available");
+    }
+
+    // Notify parent to refresh
+    console.log("[BOOKING] Calling onBooking callback");
+    if (onBooking) {
+      onBooking();
+    } else {
+      console.log("[BOOKING] No onBooking callback provided");
+    }
+
+    // Open booking
+    window.open(buildBookingUrl("airline"), "_blank");
   };
 
   const airlineDisplay = getAirlineDisplay();
@@ -201,10 +250,10 @@ export function FlightCard({ flight, index }: FlightCardProps) {
               <div className="mt-2 flex w-full flex-col gap-2 md:w-auto">
                 <Button
                   size="sm"
-                  onClick={() => window.open(buildBookingUrl("airline"), "_blank")}
+                  onClick={handleBookClick}
                   className="flex items-center gap-1"
                 >
-                  Book with {airlineDisplay.name}
+                  Book with {getAirlineDisplay().name}
                   <ExternalLink className="h-3 w-3" />
                 </Button>
               </div>

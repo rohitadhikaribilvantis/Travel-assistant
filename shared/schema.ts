@@ -17,6 +17,17 @@ export interface ChatMessage {
   isStreaming?: boolean;
   memoryContext?: string;
   appliedPrefs?: string;
+  travelHistory?: Array<{
+    origin?: string;
+    destination?: string;
+    airline?: string;
+    departure_date?: string;
+    cabin_class?: string;
+    price?: number;
+    currency?: string;
+    booked_at?: string;
+    memory?: string;
+  }>;
 }
 
 export interface ChatResponse {

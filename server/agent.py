@@ -615,6 +615,62 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
             "flight_results": []
         }
     
+    # Special handling for travel history queries
+    if any(word in message_lower for word in ["show my travel history", "travel history", "my bookings", "my bookings", "where have i traveled", "where have i been"]):
+        print(f"[AGENT] Travel history query detected for user {user_id}")
+        travel_history = memory_manager.get_travel_history(user_id)
+        print(f"[AGENT] Retrieved {len(travel_history) if travel_history else 0} travel history items")
+        
+        if not travel_history:
+            travel_history = []
+        
+        # Filter to only include actual bookings, not searches
+        bookings_only = [
+            m for m in travel_history 
+            if m and isinstance(m, dict) and ("booked" in m.get("memory", "").lower() or "flight" in m.get("memory", "").lower())
+        ]
+        print(f"[AGENT] Filtered to {len(bookings_only)} booked flights")
+        
+        if not bookings_only:
+            return {
+                "content": "You haven't booked any flights yet. When you book a flight, it will appear in your travel history!",
+                "extracted_preferences": [],
+                "flight_results": [],
+                "travel_history": []
+            }
+        
+        # Parse travel history for display
+        parsed_history = []
+        for booking in bookings_only:
+            if not booking:
+                continue
+            memory_str = booking.get("memory", "") if isinstance(booking, dict) else str(booking)
+            metadata = booking.get("metadata", {}) if isinstance(booking, dict) else {}
+            
+            # Try to extract structured data from metadata first, fall back to parsing memory string
+            parsed_booking = {
+                "origin": metadata.get("origin", "") if metadata else "",
+                "destination": metadata.get("destination", "") if metadata else "",
+                "airline": metadata.get("airline", "") if metadata else "",
+                "departure_date": metadata.get("departure_date", "") if metadata else "",
+                "cabin_class": metadata.get("cabin_class", "") if metadata else "",
+                "price": metadata.get("price", "") if metadata else "",
+                "currency": metadata.get("currency", "USD") if metadata else "USD",
+                "booked_at": metadata.get("booked_at", "") if metadata else "",
+                "memory": memory_str
+            }
+            parsed_history.append(parsed_booking)
+        
+        # Build a nice text summary (minimal since we'll show cards)
+        history_lines = ["Here's your travel bookings:"]
+        
+        return {
+            "content": "\n".join(history_lines),
+            "extracted_preferences": [],
+            "flight_results": [],
+            "travel_history": parsed_history
+        }
+    
     system_prompt = get_system_prompt_with_memory(user_id)
     
     # Extract last flight search context if user is expressing new preferences

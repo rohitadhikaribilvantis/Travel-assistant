@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import type { ChatMessage } from "@shared/schema";
 import { FlightCard } from "./flight-card";
+import { TravelHistoryDisplay } from "./travel-history-display";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -11,9 +12,10 @@ interface MessageBubbleProps {
   message: ChatMessage;
   userAvatar?: string;
   onShowFilter?: () => void;
+  onBooking?: () => void;
 }
 
-export function MessageBubble({ message, userAvatar, onShowFilter }: MessageBubbleProps) {
+export function MessageBubble({ message, userAvatar, onShowFilter, onBooking }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
   const hasFlights = message.flightResults && message.flightResults.length > 0;
@@ -170,7 +172,7 @@ export function MessageBubble({ message, userAvatar, onShowFilter }: MessageBubb
                         </h3>
                         <div className="flex flex-col gap-4">
                           {flights.map((flight, index) => (
-                            <FlightCard key={`${flight.id}-${index}`} flight={flight} index={index} />
+                            <FlightCard key={`${flight.id}-${index}`} flight={flight} index={index} onBooking={onBooking} />
                           ))}
                         </div>
                       </div>
@@ -179,6 +181,12 @@ export function MessageBubble({ message, userAvatar, onShowFilter }: MessageBubb
                 </div>
               );
             })()}
+          </div>
+        )}
+
+        {message.travelHistory && message.travelHistory.length > 0 && (
+          <div className="mt-3 w-full">
+            <TravelHistoryDisplay bookings={message.travelHistory} />
           </div>
         )}
 

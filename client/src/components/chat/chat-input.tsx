@@ -120,6 +120,15 @@ export function ChatInput({ onSendMessage, isLoading, disabled, messages, curren
           >
             Show my current preferences
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleSuggestionClick("Show my travel history")}
+            disabled={isLoading || disabled}
+            className="whitespace-nowrap text-xs"
+          >
+            Show my travel history
+          </Button>
         </div>
       )}
 

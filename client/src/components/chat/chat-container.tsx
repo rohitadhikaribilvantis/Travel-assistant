@@ -11,9 +11,10 @@ import type { ChatMessage, FlightOffer } from "@shared/schema";
 interface ChatContainerProps {
   messages: ChatMessage[];
   isLoading?: boolean;
+  onBooking?: () => void;
 }
 
-export function ChatContainer({ messages, isLoading }: ChatContainerProps) {
+export function ChatContainer({ messages, isLoading, onBooking }: ChatContainerProps) {
   const { user } = useAuth();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -78,6 +79,7 @@ export function ChatContainer({ messages, isLoading }: ChatContainerProps) {
                 setShowFilter(true);
                 setFilteredFlights(null);
               }}
+              onBooking={onBooking}
             />
           ))}
           {isLoading && <LoadingSkeleton />}

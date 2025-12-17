@@ -85,6 +85,7 @@ class ChatMessageModel(BaseModel):
     isStreaming: Optional[bool] = False
     memoryContext: Optional[str] = None
     appliedPrefs: Optional[str] = None
+    travelHistory: Optional[list] = None
 
 class ChatRequest(BaseModel):
     message: str
@@ -393,6 +394,7 @@ async def chat(request: ChatRequest, current_user: dict = Depends(get_current_us
             flightResults=result.get("flight_results", []),
             memoryContext=result.get("memory_context"),
             appliedPrefs=result.get("applied_prefs_summary"),
+            travelHistory=result.get("travel_history"),
         )
 
         # Add messages to conversation
@@ -658,33 +660,29 @@ async def delete_preference(preference_text: str, current_user: dict = Depends(g
         print(f"[DELETE PREF] Exception: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error deleting preference: {str(e)}")
 
+# ==================== Travel History ====================
+@app.post("/api/memory/record-booking")
+async def record_booking(request: dict, current_user: dict = Depends(get_current_user)):
+    """Record a booked flight."""
+    from memory_manager import memory_manager
+    try:
+        result = memory_manager.record_booked_flight(current_user["id"], request)
+        return {"success": "error" not in result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error recording booking: {str(e)}")
+
 @app.get("/api/memory/travel-history")
 async def get_travel_history(current_user: dict = Depends(get_current_user)):
     """Get user's travel history."""
     from memory_manager import memory_manager
     try:
         history = memory_manager.get_travel_history(current_user["id"])
-        return {
-            "userId": current_user["id"],
-            "history": history,
-            "count": len(history)
-        }
+        print(f"[HISTORY] Retrieved {len(history)} travel history items")
+        for i, booking in enumerate(history):
+            print(f"[HISTORY] Booking {i+1}: {booking.get('memory', '')}")
+        return {"history": history, "count": len(history)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving travel history: {str(e)}")
-
-@app.get("/api/memory/routes")
-async def get_favorite_routes(current_user: dict = Depends(get_current_user)):
-    """Get user's favorite/frequent routes."""
-    from memory_manager import memory_manager
-    try:
-        routes = memory_manager.get_favorite_routes(current_user["id"])
-        return {
-            "userId": current_user["id"],
-            "routes": routes,
-            "count": len(routes)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving routes: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving history: {str(e)}")
 
 # ==================== Run Server ====================
 if __name__ == "__main__":

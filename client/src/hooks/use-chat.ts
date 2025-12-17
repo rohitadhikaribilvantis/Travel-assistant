@@ -141,6 +141,7 @@ export function useChat() {
 
   return {
     messages,
+    setMessages,
     isLoading: sendMessageMutation.isPending,
     sendMessage,
     clearChat,

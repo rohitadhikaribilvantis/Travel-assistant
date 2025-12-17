@@ -5,10 +5,11 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/use-auth";
 import { useMemory } from "@/hooks/use-memory";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { usePreferences } from "@/hooks/use-preferences";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { TravelHistoryDisplay } from "./travel-history-display";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -29,9 +30,10 @@ interface ChatHeaderProps {
   onPreferencesRefresh?: () => void;
   externalRefreshTrigger?: number;
   onPreferencesChange?: (preferences: CurrentPreferences) => void;
+  onRefreshBookings?: (refreshFn: () => void) => void;
 }
 
-export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, onPreferencesChange }: ChatHeaderProps) {
+export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, onPreferencesChange, onRefreshBookings }: ChatHeaderProps) {
   const { user, logout } = useAuth();
   const { token } = useAuth();
   const [, navigate] = useLocation();
@@ -42,6 +44,8 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
   const { preferences: memoryPreferences, refreshPreferences, isLoadingPreferences, removePreference, isRemovingPreference } = useMemory(user?.id, effectiveRefreshTrigger);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [travelHistoryOpen, setTravelHistoryOpen] = useState(false);
+  const [bookings, setBookings] = useState<any[]>([]);
+  const [isLoadingBookings, setIsLoadingBookings] = useState(false);
   const [directFlightsOnly, setDirectFlightsOnly] = useState(false);
   const [avoidRedEye, setAvoidRedEye] = useState(false);
   const [preferredTime, setPreferredTime] = useState<string>("");
@@ -62,8 +66,54 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
     if (preferencesOpen) {
       // Force refetch fresh data
       setTimeout(() => refreshPreferences(), 100);
+    } else {
+      // Reset all toggle states when sheet closes
+      setDirectFlightsOnly(false);
+      setAvoidRedEye(false);
+      setPreferredTime("");
+      setCabinClass("");
+      setTripType("");
     }
   }, [preferencesOpen, refreshPreferences]);
+
+  // Fetch bookings when travel history sheet opens
+  useEffect(() => {
+    if (travelHistoryOpen && token) {
+      setIsLoadingBookings(true);
+      fetch("http://localhost:8000/api/memory/travel-history", {
+        headers: { "Authorization": `Bearer ${token}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          setBookings(data.history || []);
+          setIsLoadingBookings(false);
+        })
+        .catch(error => {
+          console.error("Error fetching bookings:", error);
+          setIsLoadingBookings(false);
+        });
+    }
+  }, [travelHistoryOpen, token]);
+
+  const refreshBookings = useCallback(() => {
+    if (token) {
+      fetch("http://localhost:8000/api/memory/travel-history", {
+        headers: { "Authorization": `Bearer ${token}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          setBookings(data.history || []);
+        })
+        .catch(error => console.error("Error refreshing bookings:", error));
+    }
+  }, [token]);
+
+  // Expose refreshBookings to parent on mount
+  useEffect(() => {
+    if (onRefreshBookings) {
+      onRefreshBookings(refreshBookings);
+    }
+  }, [refreshBookings, onRefreshBookings]);
 
   // Notify parent when preferences change
   useEffect(() => {
@@ -607,36 +657,40 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
         </Sheet>
 
         {/* Travel History Sheet */}
+        <Sheet open={false} onOpenChange={() => {}}>
+          <SheetContent side="right" className="w-full sm:w-[500px] overflow-y-auto">
+            <SheetHeader>
+              <SheetTitle>Travel History</SheetTitle>
+            </SheetHeader>
+          </SheetContent>
+        </Sheet>
+
+        {/* Travel History */}
         <Sheet open={travelHistoryOpen} onOpenChange={setTravelHistoryOpen}>
           <Button
             variant="ghost"
             size="icon"
             onClick={() => setTravelHistoryOpen(true)}
             title="Travel History"
+            className="relative"
           >
             📚
-            <span className="sr-only">Travel History</span>
+            {bookings.length > 0 && (
+              <span className="absolute top-1 right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                {bookings.length}
+              </span>
+            )}
           </Button>
-          <SheetContent side="right" className="w-full sm:w-[500px] overflow-y-auto">
+          <SheetContent side="right" className="w-full sm:w-[500px]">
             <SheetHeader>
-              <SheetTitle className="text-2xl font-bold">📚 Travel History</SheetTitle>
+              <SheetTitle>Travel History</SheetTitle>
             </SheetHeader>
-            
-            <div className="space-y-6 py-6">
-              <div className="space-y-3">
-                <h3 className="text-lg font-semibold">📍 Frequently Used Routes</h3>
-                <p className="text-sm text-muted-foreground">Your most traveled routes will appear here</p>
-              </div>
-
-              <div className="space-y-3">
-                <h3 className="text-lg font-semibold">🎫 Previously Booked Flights</h3>
-                <p className="text-sm text-muted-foreground">Your booking history will appear here</p>
-              </div>
-
-              <div className="space-y-3">
-                <h3 className="text-lg font-semibold">⏱️ Duration Preferences</h3>
-                <p className="text-sm text-muted-foreground">Your preferred trip durations will appear here</p>
-              </div>
+            <div className="py-4">
+              {isLoadingBookings ? (
+                <p className="text-sm text-muted-foreground">Loading...</p>
+              ) : (
+                <TravelHistoryDisplay bookings={bookings} />
+              )}
             </div>
           </SheetContent>
         </Sheet>

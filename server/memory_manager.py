@@ -1,4 +1,5 @@
 import os
+import re
 from typing import Optional, List, Dict, Literal
 from datetime import datetime
 
@@ -359,9 +360,45 @@ class TravelMemoryManager:
         """Get all preference-related memories for a user."""
         return self.get_user_memories(user_id, query="travel preferences seat airline time cabin")
     
+    def record_duration_preference(self, user_id: str, duration_hours: int, trip_type: str) -> Dict:
+        """Record observed duration preferences from bookings."""
+        try:
+            duration_days = duration_hours / 24 if duration_hours else 0
+            return self.add_structured_memory(
+                user_id=user_id,
+                category="travel_history",
+                content=f"Preferred trip duration: {int(duration_days)} days for {trip_type} trips",
+                memory_type="duration_preference",
+                metadata={
+                    "duration_hours": duration_hours,
+                    "duration_days": duration_days,
+                    "trip_type": trip_type,
+                    "recorded_at": datetime.utcnow().isoformat()
+                }
+            )
+        except Exception as e:
+            print(f"Error recording duration preference: {e}")
+            return {"error": str(e)}
+    
     def get_travel_history(self, user_id: str) -> List[Dict]:
         """Get travel history memories for a user."""
-        return self.get_user_memories(user_id, query="traveled booked flight journey trip")
+        try:
+            memories = self.get_user_memories(user_id, query="traveled booked flight journey trip")
+            if not memories:
+                return []
+            
+            # Filter to only include booked flights, not searches or other travel-related memories
+            booked_flights = [
+                m for m in memories 
+                if m and isinstance(m, dict) and (
+                    "booked" in m.get("memory", "").lower() or 
+                    ("flight" in m.get("memory", "").lower() and "→" in m.get("memory", ""))
+                )
+            ]
+            return booked_flights
+        except Exception as e:
+            print(f"[ERROR] Error getting travel history: {e}")
+            return []
     
     def get_favorite_routes(self, user_id: str) -> List[Dict]:
         """Get frequently traveled routes for a user."""
@@ -418,6 +455,37 @@ class TravelMemoryManager:
                 memory_id = mem.get("id", None) if isinstance(mem, dict) else None
                 memory_lower = memory_text.lower()
                 
+                # IMPORTANT: Skip bookings and searches - they go in travel_history, not preferences!
+                if "booked" in memory_lower or "user booked" in memory_lower:
+                    print(f"[MEMORY] Skipping booking (not a preference): '{memory_text}'")
+                    continue
+                if "searched" in memory_lower or "user searched" in memory_lower:
+                    print(f"[MEMORY] Skipping search (not a preference): '{memory_text}'")
+                    continue
+                if "traveled" in memory_lower or "user traveled" in memory_lower:
+                    print(f"[MEMORY] Skipping travel history (not a preference): '{memory_text}'")
+                    continue
+                
+                # Skip entries explicitly marked as travel history
+                if "travel history entry" in memory_lower:
+                    print(f"[MEMORY] Skipping travel history entry: '{memory_text}'")
+                    continue
+                
+                # Skip memories that look like flight bookings (pattern: "from ABC to XYZ with AIRLINE in CLASS for CURRENCY PRICE")
+                if re.search(r'from\s+[A-Z]{3}\s+to\s+[A-Z]{3}.*with\s+\w+.*(?:USD|EUR|GBP|\$)', memory_text, re.IGNORECASE):
+                    print(f"[MEMORY] Skipping travel booking pattern (not a preference): '{memory_text}'")
+                    continue
+                
+                # Skip entries with "flight from X to Y" pattern (another variant of flight booking)
+                if re.search(r'flight\s+from\s+[A-Z]{3}\s+to\s+[A-Z]{3}', memory_text, re.IGNORECASE):
+                    print(f"[MEMORY] Skipping flight booking format (flight from X to Y): '{memory_text}'")
+                    continue
+                
+                # Skip memories that have arrow symbol with times/prices
+                if ("→" in memory_text and ("pm" in memory_lower or "am" in memory_lower)) or (any(currency in memory_text for currency in ["USD", "EUR", "$", "GBP"]) and "→" in memory_text):
+                    print(f"[MEMORY] Skipping flight booking pattern (not a preference): '{memory_text}'")
+                    continue
+                
                 # Create entry (with or without ID)
                 if include_ids:
                     entry = {"id": memory_id, "text": memory_text, "memory": memory_text}
@@ -461,9 +529,6 @@ class TravelMemoryManager:
                 elif any(word in memory_lower for word in ["live", "based", "from", "home"]) and any(word in memory_lower for word in ["houston", "newyork", "los angeles", "london", "paris", "tokyo", "delhi", "mumbai", "kathmandu", "beijing", "chicago", "miami", "seattle", "boston", "denver", "dallas", "austin", "sanfrancisco"]):
                     print(f"  -> Categorized as LOCATION")
                     summary["location"].append(entry)
-                elif any(word in memory_lower for word in ["route", "traveled", "booked", "flight"]):
-                    print(f"  -> Categorized as ROUTE")
-                    summary["routes"].append(entry)
                 else:
                     print(f"  -> Categorized as OTHER")
                     summary["other"].append(entry)
@@ -476,6 +541,64 @@ class TravelMemoryManager:
             import traceback
             traceback.print_exc()
             return {}
+    
+    def record_booked_flight(self, user_id: str, flight_data: Dict) -> Dict:
+        """Record a booked flight to travel history."""
+        try:
+            origin = flight_data.get("origin", "")
+            destination = flight_data.get("destination", "")
+            airline_name = flight_data.get("airline_name", flight_data.get("airline", ""))
+            departure_date = flight_data.get("departure_date", "")
+            departure_time = flight_data.get("departure_time", "")
+            arrival_time = flight_data.get("arrival_time", "")
+            cabin_class = flight_data.get("cabin_class", "")
+            price = flight_data.get("price", "")
+            currency = flight_data.get("currency", "USD")
+            
+            # Build natural language content
+            content = f"{airline_name} {origin} → {destination}"
+            if departure_date:
+                content += f" on {departure_date}"
+            if departure_time and arrival_time:
+                content += f" ({departure_time} - {arrival_time})"
+            if cabin_class:
+                content += f" • {cabin_class}"
+            if price:
+                content += f" • {currency} {int(float(price))}"
+            
+            print(f"[BOOKING] Recording new booked flight for user {user_id}: {content}")
+            
+            result = self.add_structured_memory(
+                user_id=user_id,
+                category="travel_history",
+                content=content,
+                memory_type="booked_flight",
+                metadata={
+                    "origin": origin,
+                    "destination": destination,
+                    "airline": airline_name,
+                    "departure_date": departure_date,
+                    "cabin_class": cabin_class,
+                    "price": price,
+                    "currency": currency,
+                    "booked_at": datetime.utcnow().isoformat()
+                }
+            )
+            
+            print(f"[BOOKING] Successfully recorded booking, result: {result}")
+            
+            # Now retrieve all bookings to verify
+            from main import app
+            all_bookings = self.get_user_memories(user_id, query="booked flight booking")
+            booked_flights = [m for m in all_bookings if isinstance(m, dict) and "booked" in m.get("memory", "").lower()]
+            print(f"[BOOKING] Total bookings after recording: {len(booked_flights)}")
+            for i, booking in enumerate(booked_flights):
+                print(f"[BOOKING] Booking {i+1}: {booking.get('memory', '')}")
+            
+            return result
+        except Exception as e:
+            print(f"Error recording booked flight: {e}")
+            return {"error": str(e)}
     
     def delete_memory(self, user_id: str, memory_id: str) -> Dict:
         """
@@ -507,7 +630,7 @@ class TravelMemoryManager:
     
     def clear_all_preferences(self, user_id: str) -> Dict:
         """
-        Clear only preference-type memories for a user, keeping travel history and other memories.
+        Clear all preference-type memories for a user, keeping only travel history.
         
         Args:
             user_id: The user identifier
@@ -515,14 +638,14 @@ class TravelMemoryManager:
         Returns:
             Result with count of deleted preferences
         """
-        print(f"[MEMORY] Clearing all preferences (but NOT all memories) for user {user_id}")
+        print(f"[MEMORY] Clearing all preferences for user {user_id}")
         memory = self._get_memory()
         if not memory:
             print(f"[MEMORY ERROR] mem0 not available")
             return {"error": "Memory system not available"}
         
         try:
-            # Get all memories and delete only those that are preferences
+            # Get all memories
             all_memories = self.get_user_memories(user_id)
             print(f"[MEMORY] Found {len(all_memories)} total memories for user {user_id}")
             
@@ -532,25 +655,23 @@ class TravelMemoryManager:
             for mem in all_memories:
                 memory_text = mem.get("memory", "") if isinstance(mem, dict) else str(mem)
                 memory_id = mem.get("id") if isinstance(mem, dict) else None
-                memory_category = mem.get("category") if isinstance(mem, dict) else None
-                memory_type = mem.get("type") if isinstance(mem, dict) else None
+                memory_lower = memory_text.lower() if memory_text else ""
                 
-                # STRICT: Only delete if category is explicitly "preference"
-                # This ensures we never accidentally delete travel history, logs, or other memory types
-                is_preference = memory_category == "preference"
+                # Only keep travel history - skip everything else
+                is_travel_history = (
+                    "booked" in memory_lower or
+                    "traveled" in memory_lower or
+                    ("departure" in memory_lower and "date" in memory_lower) or
+                    ("departure" in memory_lower and "arrival" in memory_lower) or
+                    ("flight" in memory_lower and ("→" in memory_text or "->" in memory_text))
+                )
                 
-                if is_preference:
-                    print(f"[MEMORY] Deleting preference: {memory_text} (ID: {memory_id}, Category: {memory_category})")
-                    
-                    # Try deletion by ID
-                    if memory_id:
-                        result = self.delete_memory(user_id, memory_id)
-                        if "success" in result and result["success"]:
-                            deleted_count += 1
-                            print(f"[MEMORY] Successfully deleted preference ID {memory_id}")
+                if not is_travel_history and memory_id:
+                    result = self.delete_memory(user_id, memory_id)
+                    if "success" in result and result["success"]:
+                        deleted_count += 1
                 else:
-                    # Keep non-preference memories like travel history, logs, etc.
-                    print(f"[MEMORY] Keeping memory (Category: {memory_category}): {memory_text}")
+                    # Keep travel history
                     skipped_count += 1
             
             print(f"[MEMORY] Preference deletion complete: {deleted_count} deleted, {skipped_count} kept")
