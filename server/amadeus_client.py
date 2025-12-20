@@ -2,6 +2,7 @@ import os
 import requests
 from datetime import datetime
 from typing import Optional
+import json
 
 class AmadeusClient:
     """Client for interacting with Amadeus Flight API."""
@@ -13,6 +14,7 @@ class AmadeusClient:
         self.api_secret = os.environ.get("AMADEUS_API_SECRET")
         self.access_token = None
         self.token_expires_at = None
+        self._iata_display_cache: dict[str, str] = {}
         
     def _get_access_token(self) -> str:
         """Get or refresh the access token."""
@@ -27,7 +29,11 @@ class AmadeusClient:
             "client_secret": self.api_secret
         }
         
+        print(f"[DEBUG] Requesting token from {url} with client_id={self.api_key}")
+        
         response = requests.post(url, data=data)
+        
+        print(f"[DEBUG] Token response: {response.text}")
         
         if response.status_code != 200:
             raise Exception(f"Failed to get access token: {response.text}")
@@ -45,6 +51,73 @@ class AmadeusClient:
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
         }
+
+    def resolve_airport_display(self, iata_code: str) -> str:
+        """Resolve an airport IATA code to a human-friendly display name.
+
+        Returns a string like "Houston (IAH)" when possible; falls back to "IAH".
+        """
+        if not isinstance(iata_code, str):
+            return str(iata_code)
+        code = iata_code.strip().upper()
+        if len(code) != 3:
+            return code
+
+        # Small fallback map (used when API lookup fails).
+        fallback = {
+            "NRT": "Tokyo (NRT)",
+            "KTM": "Kathmandu (KTM)",
+        }
+
+        cached = self._iata_display_cache.get(code)
+        if cached:
+            return cached
+
+        url = f"{self.BASE_URL}/v1/reference-data/locations"
+        # Ask for both airports and cities; some codes resolve more reliably this way.
+        params = {
+            "subType": "AIRPORT,CITY",
+            "keyword": code,
+            "page[limit]": 10,
+        }
+
+        try:
+            headers = self._get_headers()
+            resp = requests.get(url, headers=headers, params=params, timeout=10)
+            if resp.status_code != 200:
+                return fallback.get(code, code)
+            payload = resp.json() or {}
+            data = payload.get("data") or []
+            if not data:
+                return fallback.get(code, code)
+
+            # Prefer an exact iataCode match if present.
+            item = None
+            for candidate in data:
+                if isinstance(candidate, dict) and str(candidate.get("iataCode", "")).upper() == code:
+                    item = candidate
+                    break
+            if item is None:
+                item = data[0] if data else {}
+
+            item = item or {}
+            address = item.get("address") or {}
+            city = address.get("cityName") or address.get("cityCode")
+            name = item.get("name")
+
+            # Prefer city name for concise, friendly display.
+            display = city or name
+            if not display:
+                return fallback.get(code, code)
+            resolved = f"{display} ({code})"
+
+            # Cache only successful resolutions (not raw codes).
+            if resolved != code:
+                self._iata_display_cache[code] = resolved
+
+            return resolved
+        except Exception:
+            return fallback.get(code, code)
     
     def search_flights(
         self,
@@ -108,8 +181,8 @@ class AmadeusClient:
             params["infants"] = infants
         if travel_class:
             params["travelClass"] = travel_class
-        if non_stop:
-            params["nonStop"] = True
+        if non_stop is not None:
+            params["nonStop"] = json.dumps(bool(non_stop)).lower()
         if max_price:
             params["maxPrice"] = max_price
             
@@ -118,6 +191,7 @@ class AmadeusClient:
             headers = self._get_headers()
             print(f"[AMADEUS] Token obtained, sending request to {url}")
             print(f"[AMADEUS] Params: {params}")
+            print(f"[DEBUG] Final Params Sent to Amadeus API: {params}")
             
             response = requests.get(url, headers=headers, params=params)
             
@@ -131,6 +205,19 @@ class AmadeusClient:
             
             data = response.json()
             processed = self._process_flight_offers(data)
+
+            # If a specific cabin was requested, only return that cabin.
+            # Amadeus sometimes includes multiple cabin values in traveler pricing; our processing
+            # may expand those into multiple entries. Keep only the requested cabin.
+            if travel_class:
+                requested = str(travel_class).upper()
+                for offer in processed.get("data", []):
+                    if not offer.get("travelClass"):
+                        offer["travelClass"] = requested
+                processed["data"] = [
+                    o for o in processed.get("data", [])
+                    if str(o.get("travelClass", "")).upper() == requested
+                ]
             
             # Apply post-search filtering based on user preferences
             if user_preferences:

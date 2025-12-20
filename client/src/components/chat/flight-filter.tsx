@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -14,9 +14,26 @@ interface FlightFilterProps {
 }
 
 export function FlightFilter({ flights, onFilter, onClose }: FlightFilterProps) {
-  const [priceRange, setPriceRange] = useState<[number, number]>([0, 5000]);
+  const maxPrice = useMemo(() => {
+    const prices = flights
+      .map((f) => Number.parseFloat(f.price.total))
+      .filter((n) => Number.isFinite(n));
+    return prices.length ? Math.ceil(Math.max(...prices)) : 0;
+  }, [flights]);
+
+  const [priceRange, setPriceRange] = useState<[number, number]>([0, maxPrice]);
   const [maxStops, setMaxStops] = useState<Set<number>>(new Set());
   const [selectedAirlines, setSelectedAirlines] = useState<Set<string>>(new Set());
+
+  // When the flight list changes (new search / new message), reset defaults.
+  useEffect(() => {
+    setPriceRange([0, maxPrice]);
+    setMaxStops(new Set());
+    setSelectedAirlines(new Set());
+    const sorted = sortFlights(flights);
+    onFilter(sorted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [maxPrice, flights]);
 
   // Extract unique airlines from flights
   const airlines = Array.from(
@@ -103,14 +120,13 @@ export function FlightFilter({ flights, onFilter, onClose }: FlightFilterProps) 
   };
 
   const resetFilters = () => {
-    setPriceRange([0, 5000]);
+    setPriceRange([0, maxPrice]);
     setMaxStops(new Set());
     setSelectedAirlines(new Set());
     const sorted = sortFlights(flights);
     onFilter(sorted);
   };
 
-  const maxPrice = Math.max(...flights.map((f) => parseFloat(f.price.total)));
 
   return (
     <Card className="w-full border-l bg-card p-4">

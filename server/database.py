@@ -1,6 +1,7 @@
 import os
 import json
 from datetime import datetime
+from collections import Counter
 from sqlalchemy import create_engine, Column, String, Text, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
@@ -45,6 +46,39 @@ class ConversationModel(Base):
     archived = Column(String, default="false")  # "true" or "false"
     createdAt = Column(String)
     updatedAt = Column(String)
+
+
+class BookingModel(Base):
+    __tablename__ = "bookings"
+
+    id = Column(String, primary_key=True, index=True)
+    userId = Column(String, index=True)
+
+    origin = Column(String, nullable=True)
+    destination = Column(String, nullable=True)
+
+    airlineCode = Column(String, nullable=True)
+    airlineName = Column(String, nullable=True)
+
+    tripType = Column(String, nullable=True)
+
+    departureDate = Column(String, nullable=True)
+    departureTime = Column(String, nullable=True)
+    arrivalTime = Column(String, nullable=True)
+
+    returnOrigin = Column(String, nullable=True)
+    returnDestination = Column(String, nullable=True)
+    returnDate = Column(String, nullable=True)
+    returnDepartureTime = Column(String, nullable=True)
+    returnArrivalTime = Column(String, nullable=True)
+
+    cabinClass = Column(String, nullable=True)
+
+    price = Column(String, nullable=True)
+    currency = Column(String, nullable=True)
+
+    bookedAt = Column(String, nullable=True)
+    createdAt = Column(String)
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -218,6 +252,133 @@ class DatabaseStorage:
             }
         finally:
             db.close()
+
+    def add_booking(self, user_id: str, booking: dict) -> dict:
+        """Persist a booking record for travel history."""
+        db = self.get_session()
+        try:
+            booking_id = str(__import__("uuid").uuid4())
+            now = datetime.now().isoformat()
+            booked_at = booking.get("booked_at") or now
+
+            db_booking = BookingModel(
+                id=booking_id,
+                userId=user_id,
+                origin=booking.get("origin"),
+                destination=booking.get("destination"),
+                airlineCode=booking.get("airline") or booking.get("airline_code"),
+                airlineName=booking.get("airline_name") or booking.get("airline"),
+                tripType=booking.get("trip_type") or booking.get("tripType"),
+                departureDate=booking.get("departure_date"),
+                departureTime=booking.get("departure_time"),
+                arrivalTime=booking.get("arrival_time"),
+                returnOrigin=booking.get("return_origin"),
+                returnDestination=booking.get("return_destination"),
+                returnDate=booking.get("return_date"),
+                returnDepartureTime=booking.get("return_departure_time"),
+                returnArrivalTime=booking.get("return_arrival_time"),
+                cabinClass=booking.get("cabin_class"),
+                price=str(booking.get("price")) if booking.get("price") is not None else None,
+                currency=booking.get("currency"),
+                bookedAt=booked_at,
+                createdAt=now,
+            )
+
+            db.add(db_booking)
+            db.commit()
+            db.refresh(db_booking)
+
+            return {
+                "id": db_booking.id,
+                "origin": db_booking.origin,
+                "destination": db_booking.destination,
+                "airline": db_booking.airlineName or db_booking.airlineCode,
+                "airline_code": db_booking.airlineCode,
+                "airline_name": db_booking.airlineName,
+                "tripType": db_booking.tripType,
+                "departure_date": db_booking.departureDate,
+                "departure_time": db_booking.departureTime,
+                "arrival_time": db_booking.arrivalTime,
+                "return_origin": db_booking.returnOrigin,
+                "return_destination": db_booking.returnDestination,
+                "return_date": db_booking.returnDate,
+                "return_departure_time": db_booking.returnDepartureTime,
+                "return_arrival_time": db_booking.returnArrivalTime,
+                "cabin_class": db_booking.cabinClass,
+                "price": float(db_booking.price) if db_booking.price else None,
+                "currency": db_booking.currency,
+                "booked_at": db_booking.bookedAt,
+            }
+        finally:
+            db.close()
+
+    def list_bookings(self, user_id: str) -> list:
+        """Return all bookings for a user (newest first)."""
+        db = self.get_session()
+        try:
+            rows = (
+                db.query(BookingModel)
+                .filter(BookingModel.userId == user_id)
+                .order_by(BookingModel.bookedAt.desc())
+                .all()
+            )
+
+            result = []
+            for r in rows:
+                result.append(
+                    {
+                        "id": r.id,
+                        "origin": r.origin,
+                        "destination": r.destination,
+                        "airline": r.airlineName or r.airlineCode,
+                        "airline_code": r.airlineCode,
+                        "airline_name": r.airlineName,
+                        "tripType": r.tripType,
+                        "departure_date": r.departureDate,
+                        "departure_time": r.departureTime,
+                        "arrival_time": r.arrivalTime,
+                        "return_origin": r.returnOrigin,
+                        "return_destination": r.returnDestination,
+                        "return_date": r.returnDate,
+                        "return_departure_time": r.returnDepartureTime,
+                        "return_arrival_time": r.returnArrivalTime,
+                        "cabin_class": r.cabinClass,
+                        "price": float(r.price) if r.price else None,
+                        "currency": r.currency,
+                        "booked_at": r.bookedAt,
+                    }
+                )
+            return result
+        finally:
+            db.close()
+
+    def list_frequent_routes(self, user_id: str, limit: int = 5) -> list:
+        """Return the most frequent routes based on saved bookings."""
+        bookings = self.list_bookings(user_id)
+        counter: Counter[str] = Counter()
+
+        def norm_iata(value: str | None) -> str | None:
+            if not isinstance(value, str):
+                return None
+            code = value.strip().upper()
+            return code if len(code) == 3 else None
+
+        for b in bookings:
+            o = norm_iata(b.get("origin"))
+            d = norm_iata(b.get("destination"))
+            if o and d:
+                counter[f"{o} → {d}"] += 1
+
+            ro = norm_iata(b.get("return_origin"))
+            rd = norm_iata(b.get("return_destination"))
+            if ro and rd:
+                counter[f"{ro} → {rd}"] += 1
+
+        if not counter:
+            return []
+
+        ranked = sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))
+        return [{"route": route, "count": count} for route, count in ranked[: max(1, limit)]]
     
     def get_conversation(self, conversation_id: str) -> dict:
         """Get conversation by ID."""

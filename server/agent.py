@@ -6,6 +6,120 @@ from typing import Optional
 from openai import OpenAI
 from amadeus_client import amadeus_client
 from memory_manager import memory_manager
+from database import DatabaseStorage
+from collections import Counter
+
+db_storage = DatabaseStorage()
+
+
+_iata_display_cache: dict[str, str] = {}
+
+
+def _iata_display(code: str) -> str:
+    if not isinstance(code, str):
+        return str(code)
+    c = code.strip().upper()
+    if len(c) != 3:
+        return c
+
+    cached = _iata_display_cache.get(c)
+    if cached:
+        return cached
+
+    resolved = amadeus_client.resolve_airport_display(c)
+    # Cache only if it actually resolved to something more than the code.
+    if isinstance(resolved, str) and resolved.strip() and resolved.strip().upper() != c:
+        _iata_display_cache[c] = resolved
+    return resolved
+
+
+def _compute_frequent_routes(user_id: str, limit: int = 5) -> list[dict]:
+    """Compute frequent routes from travel history.
+
+    Prefers DB bookings (deterministic). If none exist, falls back to mem0-based
+    travel history so answers match what the UI currently shows.
+    """
+
+    def norm_iata(value: str | None) -> str | None:
+        if not isinstance(value, str):
+            return None
+        code = value.strip().upper()
+        return code if len(code) == 3 else None
+
+    counter: Counter[tuple[str, str]] = Counter()
+
+    # 1) DB bookings
+    try:
+        bookings = db_storage.list_bookings(user_id)
+        for b in bookings:
+            o = norm_iata(b.get("origin"))
+            d = norm_iata(b.get("destination"))
+            if o and d:
+                counter[(o, d)] += 1
+
+            ro = norm_iata(b.get("return_origin"))
+            rd = norm_iata(b.get("return_destination"))
+            if ro and rd:
+                counter[(ro, rd)] += 1
+    except Exception as e:
+        print(f"[AGENT] Failed to load bookings for routes: {e}")
+
+    # 2) Fallback: mem0 travel history
+    if not counter:
+        try:
+            memories = memory_manager.get_travel_history(user_id) or []
+
+            def add_route_pair(o: str | None, d: str | None):
+                oo = norm_iata(o)
+                dd = norm_iata(d)
+                if oo and dd:
+                    counter[(oo, dd)] += 1
+
+            for m in memories:
+                if not m:
+                    continue
+
+                if isinstance(m, dict):
+                    meta = m.get("metadata") or {}
+                    add_route_pair(meta.get("origin"), meta.get("destination"))
+                    add_route_pair(meta.get("return_origin"), meta.get("return_destination"))
+
+                    memory_text = (m.get("memory") or "").strip()
+                else:
+                    memory_text = str(m).strip()
+
+                if not memory_text:
+                    continue
+
+                # Pattern: "IAH → KTM" or "IAH->KTM"
+                arrow = re.findall(r"\b([A-Z]{3})\b\s*(?:→|->)\s*\b([A-Z]{3})\b", memory_text)
+                for o, d in arrow:
+                    add_route_pair(o, d)
+
+                # Pattern: "from Houston (IAH) to Kathmandu (KTM)"
+                paren = re.findall(r"\(([A-Z]{3})\)\s*.*?\(([A-Z]{3})\)", memory_text)
+                for o, d in paren:
+                    add_route_pair(o, d)
+
+                # Pattern: "from IAH to KTM"
+                from_to = re.findall(r"from\s+([A-Z]{3})\s+to\s+([A-Z]{3})", memory_text, flags=re.IGNORECASE)
+                for o, d in from_to:
+                    add_route_pair(o, d)
+
+        except Exception as e:
+            print(f"[AGENT] Failed to compute frequent routes from memories: {e}")
+
+    if not counter:
+        return []
+
+    ranked = sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))
+    out: list[dict] = []
+    for (o, d), count in ranked[: max(1, limit)]:
+        out.append({
+            "route": f"{_iata_display(o)} → {_iata_display(d)}",
+            "count": count,
+        })
+    return out
 
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
@@ -292,7 +406,7 @@ def parse_relative_date(date_text: str) -> Optional[str]:
     
     return None
 
-def get_preference_overrides(user_id: str) -> dict:
+def get_preference_overrides(user_id: str, current_preferences: Optional[dict] = None) -> dict:
     """
     Get flight search parameter overrides from stored preferences.
     
@@ -305,6 +419,28 @@ def get_preference_overrides(user_id: str) -> dict:
     try:
         prefs = memory_manager.summarize_preferences(user_id)
         print(f"[PREFS DEBUG] Summarized preferences for user {user_id}: {prefs}")
+
+        # Apply current UI preferences first (highest priority)
+        if current_preferences:
+            cabin = current_preferences.get("cabinClass")
+            if isinstance(cabin, str) and cabin.strip():
+                cabin_l = cabin.strip().lower()
+                if "first" in cabin_l:
+                    overrides["travel_class"] = "FIRST"
+                    applied_prefs.append("First Class (current selection)")
+                elif "business" in cabin_l:
+                    overrides["travel_class"] = "BUSINESS"
+                    applied_prefs.append("Business Class (current selection)")
+                elif "premium" in cabin_l:
+                    overrides["travel_class"] = "PREMIUM_ECONOMY"
+                    applied_prefs.append("Premium Economy (current selection)")
+                elif "economy" in cabin_l:
+                    overrides["travel_class"] = "ECONOMY"
+                    applied_prefs.append("Economy (current selection)")
+
+            if current_preferences.get("directFlightsOnly") is True:
+                overrides["non_stop"] = True
+                applied_prefs.append("direct/non-stop (current selection)")
         
         # Check for passenger preferences
         if prefs.get("seat_preferences"):
@@ -321,7 +457,8 @@ def get_preference_overrides(user_id: str) -> dict:
                 applied_prefs.append("family travel")
         
         # Check for cabin class preferences - improved matching
-        if prefs.get("cabin_class_preferences"):
+        # (Only apply if current UI selection didn't already set it)
+        if not overrides.get("travel_class") and prefs.get("cabin_class_preferences"):
             cabin_text = " ".join([str(item) for item in prefs["cabin_class_preferences"]]).lower()
             print(f"[PREFS DEBUG] Cabin class preferences found: {cabin_text}")
             # Check in order of priority to avoid false matches
@@ -337,11 +474,11 @@ def get_preference_overrides(user_id: str) -> dict:
             elif "economy" in cabin_text:
                 overrides["travel_class"] = "ECONOMY"
                 applied_prefs.append("Economy preference")
-        else:
+        elif not overrides.get("travel_class"):
             print(f"[PREFS DEBUG] No cabin class preferences stored for user {user_id}")
         
-        # Check for direct flight preferences
-        if prefs.get("flight_type_preferences"):
+        # Check for direct flight preferences (only if UI didn't already set it)
+        if overrides.get("non_stop") is None and prefs.get("flight_type_preferences"):
             flight_text = " ".join([str(item) for item in prefs["flight_type_preferences"]]).lower()
             print(f"[PREFS DEBUG] Flight type preferences found: {flight_text}")
             if "direct" in flight_text or "non-stop" in flight_text:
@@ -374,7 +511,7 @@ def get_preference_overrides(user_id: str) -> dict:
         return {}
         return {}
 
-def execute_tool(tool_name: str, arguments: dict, user_id: str) -> dict:
+def execute_tool(tool_name: str, arguments: dict, user_id: str, current_preferences: Optional[dict] = None) -> dict:
     """Execute a tool and return the result."""
     
     if tool_name == "search_flights":
@@ -390,8 +527,8 @@ def execute_tool(tool_name: str, arguments: dict, user_id: str) -> dict:
         if isinstance(non_stop, str):
             non_stop = non_stop.lower() in ("true", "yes", "1")
         
-        # Apply preference overrides
-        overrides = get_preference_overrides(user_id)
+        # Apply preference overrides (UI selection should win)
+        overrides = get_preference_overrides(user_id, current_preferences)
         adults = overrides.get("adults", adults)
         travel_class = overrides.get("travel_class", travel_class)
         non_stop = overrides.get("non_stop", non_stop)
@@ -531,6 +668,40 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
     
     # Special handling for preference queries
     message_lower = user_message.lower()
+
+    # Special handling for frequent routes queries (based on travel history)
+    if any(
+        phrase in message_lower
+        for phrase in [
+            "routes do i travel frequently",
+            "what routes do i travel frequently",
+            "my frequent routes",
+            "frequent routes",
+            "most frequent routes",
+            "routes i travel",
+            "where do i travel frequently",
+        ]
+    ):
+        routes = _compute_frequent_routes(user_id, limit=5)
+        if not routes:
+            return {
+                "content": "You don't have any bookings yet, so I can't determine frequent routes. Book a flight and then ask again.",
+                "extracted_preferences": [],
+                "flight_results": [],
+            }
+
+        lines = ["Here are your most frequent routes (from your travel history):\n"]
+        for i, r in enumerate(routes, start=1):
+            count = r.get("count", 0)
+            trip_word = "trip" if count == 1 else "trips"
+            lines.append(f"{i}. {r.get('route')} — {count} {trip_word}")
+
+        return {
+            "content": "\n".join(lines),
+            "extracted_preferences": [],
+            "flight_results": [],
+        }
+
     if any(word in message_lower for word in ["what are my preferences", "show my preferences", "what preferences do i have", "list my preferences", "my preferences"]):
         pref_summary = memory_manager.summarize_preferences(user_id, include_ids=True)
         print(f"[AGENT] Preference query detected. Summary: {pref_summary}")
@@ -538,6 +709,16 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
         # Merge current UI preferences with stored preferences
         # Current preferences take priority (they're the latest selections)
         merged_prefs = _merge_preferences(pref_summary, current_preferences)
+
+        # Add frequent routes derived from travel history
+        try:
+            frequent_routes = _compute_frequent_routes(user_id, limit=5)
+            if frequent_routes:
+                merged_prefs["routes"] = [
+                    f"{r['route']} ({r['count']})" for r in frequent_routes if r.get("route")
+                ]
+        except Exception as e:
+            print(f"[AGENT] Failed to compute frequent routes: {e}")
         
         if not merged_prefs and not current_preferences:
             return {
@@ -734,7 +915,7 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
                 tool_name = tool_call.function.name
                 arguments = json.loads(tool_call.function.arguments)
                 
-                result = execute_tool(tool_name, arguments, user_id)
+                result = execute_tool(tool_name, arguments, user_id, current_preferences)
                 tool_results.append({
                     "tool_call_id": tool_call.id,
                     "output": json.dumps(result)

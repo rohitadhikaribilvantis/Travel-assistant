@@ -80,7 +80,7 @@ class TravelMemoryManager:
                 self._initialized = True
         return self._memory
     
-    def get_user_memories(self, user_id: str, query: Optional[str] = None) -> List[Dict]:
+    def get_user_memories(self, user_id: str, query: Optional[str] = None, limit: int = 50) -> List[Dict]:
         """
         Retrieve user memories, optionally filtered by a search query.
         
@@ -93,42 +93,50 @@ class TravelMemoryManager:
         """
         memory = self._get_memory()
         if not memory:
-            print(f"[MEMORY] mem0 not initialized for user {user_id}")
+            print(f"[MEMORY] Memory client not initialized for user {user_id}")
             return []
-        
+
         try:
             # MemoryClient requires filters parameter with user_id
             filters = {"user_id": user_id}
-            
+
             if query:
                 print(f"[MEMORY] Searching for '{query}' for user {user_id}")
-                results = memory.search(query, filters=filters)
+                # Some mem0 client versions support a `limit`/`top_k` style argument.
+                # Try to request more results to avoid only returning the top few hits.
+                try:
+                    results = memory.search(query, filters=filters, limit=limit)
+                except TypeError:
+                    results = memory.search(query, filters=filters)
             else:
                 # If no query, search for generic terms to get all preferences
                 print(f"[MEMORY] Getting all memories for user {user_id} via search")
                 search_query = "preference flight cabin class time depart airline seat travel"
-                results = memory.search(search_query, filters=filters)
-            
+                try:
+                    results = memory.search(search_query, filters=filters, limit=limit)
+                except TypeError:
+                    results = memory.search(search_query, filters=filters)
+
             print(f"[MEMORY] Search results: {results}")
-            
+
             # MemoryClient.search() returns {"results": [memory_list]}
             if isinstance(results, dict):
                 memories = results.get("results", [])
             else:
                 memories = results if isinstance(results, list) else []
-            
+
             # Filter out "general" type memories (old/confusing ones we don't want to display)
             filtered_memories = [
                 m for m in memories
                 if not (isinstance(m, dict) and m.get("type") == "general")
                 and not (isinstance(m, dict) and "Type: General" in str(m.get("memory", "")))
             ]
-            
+
             # Clean up memory text by removing " for general" suffix
             for mem in filtered_memories:
                 if isinstance(mem, dict) and "memory" in mem:
                     mem["memory"] = mem["memory"].replace(" for general", "").strip()
-            
+
             print(f"[MEMORY] Retrieved {len(filtered_memories)} memories for user {user_id} (filtered from {len(memories)})")
             if filtered_memories:
                 print(f"[MEMORY] Sample memory structure: {filtered_memories[0] if filtered_memories else 'None'}")
@@ -205,33 +213,35 @@ class TravelMemoryManager:
     def get_preferences_summary(self, user_id: str) -> str:
         """
         Get a formatted summary of user travel preferences.
-        
+
         Args:
             user_id: The user identifier
-            
+
         Returns:
             Formatted preference summary string
         """
         try:
-            # Search for preference-related memories
-            preference_memories = self.get_user_memories(user_id, query="travel preferences seat airline time cabin class")
-            
+            # Expanded query to include more potential preference keywords
+            preference_memories = self.get_user_memories(
+                user_id, query="travel preferences seat airline time cabin class red_eye baggage trip_type"
+            )
+
             if not preference_memories:
-                return ""
-            
+                return "No preferences set."
+
             preference_parts = []
             for mem in preference_memories:
                 memory_text = mem.get("memory", "") if isinstance(mem, dict) else str(mem)
                 if memory_text:
                     preference_parts.append(f"- {memory_text}")
-            
+
             if preference_parts:
                 return "Known user preferences and travel patterns:\n" + "\n".join(preference_parts)
-            
-            return ""
+
+            return "No preferences set."
         except Exception as e:
             print(f"Error getting preferences summary: {e}")
-            return ""
+            return "Error retrieving preferences."
     
     def get_user_context(self, user_id: str) -> str:
         """
@@ -383,18 +393,39 @@ class TravelMemoryManager:
     def get_travel_history(self, user_id: str) -> List[Dict]:
         """Get travel history memories for a user."""
         try:
-            memories = self.get_user_memories(user_id, query="traveled booked flight journey trip")
+            # Use a travel-history focused query and a higher limit so older bookings aren't dropped
+            # due to the underlying semantic search returning only a small top set.
+            memories = self.get_user_memories(
+                user_id,
+                query="travel history booked flight booking traveled journey",
+                limit=100,
+            )
             if not memories:
                 return []
             
             # Filter to only include booked flights, not searches or other travel-related memories
-            booked_flights = [
-                m for m in memories 
-                if m and isinstance(m, dict) and (
-                    "booked" in m.get("memory", "").lower() or 
-                    ("flight" in m.get("memory", "").lower() and "→" in m.get("memory", ""))
+            booked_flights: List[Dict] = []
+            for m in memories:
+                if not (m and isinstance(m, dict)):
+                    continue
+
+                memory_text = m.get("memory", "")
+                memory_text_lower = memory_text.lower()
+
+                # Accept common travel-history formats:
+                # - Explicit "booked" keyword (new format)
+                # - Route arrow format (e.g. "IAH → NRT")
+                # - Natural language "from IAH to NRT" with airline mention (older memories)
+                is_booked = "booked" in memory_text_lower
+                has_route_arrow = "→" in memory_text
+                is_from_to_airline = (
+                    " from " in memory_text_lower
+                    and " to " in memory_text_lower
+                    and ("airline" in memory_text_lower or "airlines" in memory_text_lower)
                 )
-            ]
+
+                if is_booked or has_route_arrow or is_from_to_airline:
+                    booked_flights.append(m)
             return booked_flights
         except Exception as e:
             print(f"[ERROR] Error getting travel history: {e}")
@@ -551,16 +582,37 @@ class TravelMemoryManager:
             departure_date = flight_data.get("departure_date", "")
             departure_time = flight_data.get("departure_time", "")
             arrival_time = flight_data.get("arrival_time", "")
+            trip_type = flight_data.get("trip_type", "")
+
+            return_origin = flight_data.get("return_origin", "")
+            return_destination = flight_data.get("return_destination", "")
+            return_date = flight_data.get("return_date", "")
+            return_departure_time = flight_data.get("return_departure_time", "")
+            return_arrival_time = flight_data.get("return_arrival_time", "")
             cabin_class = flight_data.get("cabin_class", "")
             price = flight_data.get("price", "")
             currency = flight_data.get("currency", "USD")
             
-            # Build natural language content
-            content = f"{airline_name} {origin} → {destination}"
+            # Build natural language content.
+            # Include "Booked flight" keywords so travel history retrieval can reliably detect these.
+            content = f"Booked flight: {airline_name} {origin} → {destination}"
             if departure_date:
                 content += f" on {departure_date}"
             if departure_time and arrival_time:
                 content += f" ({departure_time} - {arrival_time})"
+
+            is_round_trip = bool(trip_type and "round" in str(trip_type).lower()) or bool(return_date)
+            if is_round_trip:
+                content += " • Round Trip"
+                if return_origin and return_destination:
+                    content += f" | Return {return_origin} → {return_destination}"
+                if return_date:
+                    content += f" on {return_date}"
+                if return_departure_time and return_arrival_time:
+                    content += f" ({return_departure_time} - {return_arrival_time})"
+            elif trip_type:
+                content += f" • {trip_type}"
+
             if cabin_class:
                 content += f" • {cabin_class}"
             if price:
@@ -578,6 +630,14 @@ class TravelMemoryManager:
                     "destination": destination,
                     "airline": airline_name,
                     "departure_date": departure_date,
+                    "departure_time": departure_time,
+                    "arrival_time": arrival_time,
+                    "trip_type": trip_type,
+                    "return_origin": return_origin,
+                    "return_destination": return_destination,
+                    "return_date": return_date,
+                    "return_departure_time": return_departure_time,
+                    "return_arrival_time": return_arrival_time,
                     "cabin_class": cabin_class,
                     "price": price,
                     "currency": currency,
@@ -588,9 +648,11 @@ class TravelMemoryManager:
             print(f"[BOOKING] Successfully recorded booking, result: {result}")
             
             # Now retrieve all bookings to verify
-            from main import app
             all_bookings = self.get_user_memories(user_id, query="booked flight booking")
-            booked_flights = [m for m in all_bookings if isinstance(m, dict) and "booked" in m.get("memory", "").lower()]
+            booked_flights = [
+                m for m in all_bookings
+                if isinstance(m, dict) and "booked" in m.get("memory", "").lower()
+            ]
             print(f"[BOOKING] Total bookings after recording: {len(booked_flights)}")
             for i, booking in enumerate(booked_flights):
                 print(f"[BOOKING] Booking {i+1}: {booking.get('memory', '')}")

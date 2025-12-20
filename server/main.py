@@ -666,6 +666,14 @@ async def record_booking(request: dict, current_user: dict = Depends(get_current
     """Record a booked flight."""
     from memory_manager import memory_manager
     try:
+        # 1) Persist deterministically to DB so travel history always shows all bookings.
+        try:
+            storage.add_booking(current_user["id"], request)
+        except Exception as e:
+            # Don't fail booking recording if DB persistence fails; mem0 still acts as a fallback.
+            print(f"[BOOKING] Warning: failed to persist booking to DB: {e}")
+
+        # 2) Also record to mem0 for preference/memory features.
         result = memory_manager.record_booked_flight(current_user["id"], request)
         return {"success": "error" not in result}
     except Exception as e:
@@ -676,7 +684,8 @@ async def get_travel_history(current_user: dict = Depends(get_current_user)):
     """Get user's travel history."""
     from memory_manager import memory_manager
     try:
-        history = memory_manager.get_travel_history(current_user["id"])
+        # Prefer DB-backed travel history (complete, ordered), fallback to mem0 if empty.
+        history = storage.list_bookings(current_user["id"]) or memory_manager.get_travel_history(current_user["id"])
         print(f"[HISTORY] Retrieved {len(history)} travel history items")
         for i, booking in enumerate(history):
             print(f"[HISTORY] Booking {i+1}: {booking.get('memory', '')}")

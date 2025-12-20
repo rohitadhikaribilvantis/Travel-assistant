@@ -77,9 +77,14 @@ export function FlightCard({ flight, index, onBooking }: FlightCardProps) {
     };
   };
 
+  // Ensure the "Book" button does not save preferences and only updates travel history.
   const handleBookClick = async () => {
     console.log("[BOOKING] Book clicked for flight:", firstSegment.carrierCode);
-    
+
+    const hasReturn = !!returnFlight;
+    const returnFirstSegment = hasReturn ? returnFlight.segments[0] : undefined;
+    const returnLastSegment = hasReturn ? returnFlight.segments[returnFlight.segments.length - 1] : undefined;
+
     // Record booking
     if (token) {
       try {
@@ -98,6 +103,12 @@ export function FlightCard({ flight, index, onBooking }: FlightCardProps) {
             departure_date: firstSegment.departure.at.split("T")[0],
             departure_time: formatTime(firstSegment.departure.at),
             arrival_time: formatTime(lastSegment.arrival.at),
+            trip_type: hasReturn ? "Round Trip" : "One Way",
+            return_origin: returnFirstSegment?.departure.iataCode,
+            return_destination: returnLastSegment?.arrival.iataCode,
+            return_date: returnFirstSegment?.departure.at.split("T")[0],
+            return_departure_time: returnFirstSegment ? formatTime(returnFirstSegment.departure.at) : undefined,
+            return_arrival_time: returnLastSegment ? formatTime(returnLastSegment.arrival.at) : undefined,
             cabin_class: flight.travelClass?.replace("_", " ") || "economy",
             price: parseFloat(flight.price.total),
             currency: flight.price.currency
