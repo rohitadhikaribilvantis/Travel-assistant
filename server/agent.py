@@ -121,6 +121,206 @@ def _compute_frequent_routes(user_id: str, limit: int = 5) -> list[dict]:
         })
     return out
 
+
+def _get_travel_history_items(user_id: str, limit: int = 50) -> list[dict]:
+    """Return travel history items in the same shape the UI expects.
+
+    Uses DB bookings first (deterministic), and falls back to mem0 travel history.
+    """
+    def _clean_text(value: object) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        v = value.strip()
+        if not v:
+            return None
+        if v.lower() in {"a", "an", "the"}:
+            return None
+        return v
+
+    try:
+        rows = db_storage.list_bookings(user_id)
+        if rows:
+            cleaned_rows: list[dict] = []
+            seen_db: set[tuple] = set()
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                cleaned = dict(r)
+                for k in [
+                    "origin",
+                    "destination",
+                    "airline",
+                    "airline_code",
+                    "airline_name",
+                    "tripType",
+                    "departure_date",
+                    "departure_time",
+                    "arrival_time",
+                    "return_origin",
+                    "return_destination",
+                    "return_date",
+                    "return_departure_time",
+                    "return_arrival_time",
+                    "cabin_class",
+                    "currency",
+                ]:
+                    if k in cleaned:
+                        cleaned[k] = _clean_text(cleaned.get(k))
+                db_key = (
+                    (cleaned.get("origin") or "").upper(),
+                    (cleaned.get("destination") or "").upper(),
+                    cleaned.get("departure_date") or "",
+                    cleaned.get("return_date") or "",
+                    cleaned.get("departure_time") or "",
+                    cleaned.get("return_departure_time") or "",
+                    cleaned.get("airline_code") or cleaned.get("airline_name") or cleaned.get("airline") or "",
+                    cleaned.get("cabin_class") or "",
+                    str(cleaned.get("price") or ""),
+                    cleaned.get("tripType") or "",
+                )
+                if any(v for v in db_key) and db_key in seen_db:
+                    continue
+                if any(v for v in db_key):
+                    seen_db.add(db_key)
+                cleaned_rows.append(cleaned)
+            return cleaned_rows[: max(1, limit)]
+    except Exception as e:
+        print(f"[AGENT] Failed to load bookings from DB: {e}")
+
+    # Fallback: mem0-based travel history
+    memories = memory_manager.get_travel_history(user_id) or []
+    items: list[dict] = []
+    for m in memories:
+        if not m:
+            continue
+
+        if isinstance(m, dict):
+            memory_str = (m.get("memory") or "").strip()
+            meta = m.get("metadata") or {}
+        else:
+            memory_str = str(m).strip()
+            meta = {}
+
+        # Keep only booking-like entries
+        lower = memory_str.lower()
+        if "searched" in lower:
+            continue
+        if not (
+            "book" in lower
+            or "booked" in lower
+            or "book with" in lower
+            or re.search(r"\b[A-Z]{3}\b\s*(?:→|->)\s*\b[A-Z]{3}\b", memory_str)
+        ):
+            continue
+
+        item = {
+            "origin": _clean_text(meta.get("origin")),
+            "destination": _clean_text(meta.get("destination")),
+            "airline": _clean_text(meta.get("airline") or meta.get("airline_name") or meta.get("airline_code")),
+            "airline_code": _clean_text(meta.get("airline_code") or meta.get("airline")),
+            "airline_name": _clean_text(meta.get("airline_name")),
+            "tripType": _clean_text(meta.get("tripType") or meta.get("trip_type")),
+            "departure_date": _clean_text(meta.get("departure_date")),
+            "departure_time": _clean_text(meta.get("departure_time")),
+            "arrival_time": _clean_text(meta.get("arrival_time")),
+            "return_origin": _clean_text(meta.get("return_origin")),
+            "return_destination": _clean_text(meta.get("return_destination")),
+            "return_date": _clean_text(meta.get("return_date")),
+            "return_departure_time": _clean_text(meta.get("return_departure_time")),
+            "return_arrival_time": _clean_text(meta.get("return_arrival_time")),
+            "cabin_class": _clean_text(meta.get("cabin_class")),
+            "price": meta.get("price"),
+            "currency": _clean_text(meta.get("currency")) or "USD",
+            "booked_at": _clean_text(meta.get("booked_at")),
+            "memory": memory_str,
+        }
+        items.append(item)
+
+        if len(items) >= max(1, limit):
+            break
+
+    # De-duplicate (mem0 can return near-duplicates)
+    deduped: list[dict] = []
+    seen: set[tuple] = set()
+    for it in items:
+        memory_key = re.sub(r"\s+", " ", (it.get("memory") or "").strip().lower())
+        fields_key = (
+            (it.get("origin") or "").upper(),
+            (it.get("destination") or "").upper(),
+            it.get("departure_date") or "",
+            it.get("return_date") or "",
+            (it.get("airline_name") or it.get("airline") or ""),
+            it.get("cabin_class") or "",
+            str(it.get("price") or ""),
+            it.get("tripType") or "",
+        )
+        # If we have any structured signal, dedupe primarily on that; otherwise fallback to memory text.
+        key = fields_key if any(v for v in fields_key) else (memory_key,)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(it)
+    return deduped
+
+
+def _recommendations_from_history(user_id: str, *, solo: bool) -> str:
+    """Generate lightweight trip recommendations grounded in travel history."""
+    routes = _compute_frequent_routes(user_id, limit=5)
+    if not routes:
+        return (
+            "I don't see any prior bookings yet, so I can't personalize recommendations from your travel history. "
+            "If you tell me what kind of solo trip you want (food, culture, nature, budget), I'll suggest options."
+        )
+
+    # Extract destination codes from route display strings like "Houston (IAH) → Tokyo (NRT)"
+    dest_codes: list[str] = []
+    dest_names: list[str] = []
+    for r in routes:
+        route_text = str(r.get("route", ""))
+        parts = [p.strip() for p in route_text.split("→")]
+        if len(parts) == 2:
+            dest_names.append(parts[1])
+            m = re.search(r"\(([A-Z]{3})\)\s*$", parts[1])
+            if m:
+                dest_codes.append(m.group(1))
+
+    top_places = ", ".join(dest_names[:2]) if dest_names else "your recent trips"
+
+    # Very small heuristic mapping (keep it minimal and safe)
+    suggestions: list[str] = []
+    if any(c in {"NRT", "HND", "KIX"} for c in dest_codes):
+        suggestions.extend([
+            "Kyoto, Japan — easy to explore solo with temples, cafés, and great transit",
+            "Osaka, Japan — food-forward city with lively neighborhoods",
+            "Seoul, South Korea — safe, efficient, and great for solo itineraries",
+        ])
+    if any(c in {"KTM"} for c in dest_codes):
+        suggestions.extend([
+            "Pokhara, Nepal — relaxed lakeside base and great for day hikes",
+            "Paro/Thimphu, Bhutan — culture + mountains (permit-based, but very solo-friendly)",
+        ])
+
+    if not suggestions:
+        suggestions = [
+            "Singapore — very safe, great public transit, easy for solo travelers",
+            "Lisbon, Portugal — walkable, friendly, lots of day trips",
+            "Reykjavík, Iceland — easy tours and nature with strong solo-travel infrastructure",
+        ]
+
+    # Keep response concise; user asked for recommendations, not a history dump.
+    lines = [
+        (
+            f"Based on your travel history (you frequently fly to {top_places}), here are solo-trip ideas:"
+            if solo
+            else f"Based on your travel history (you frequently fly to {top_places}), here are trip ideas:"
+        ),
+        "",
+    ]
+    for s in suggestions[:5]:
+        lines.append(f"- {s}")
+    lines.append("\nTell me: do you want culture, nature, or food-focused?")
+    return "\n".join(lines)
+
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 def extract_preferences_from_message(user_message: str) -> list[str]:
@@ -796,60 +996,70 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
             "flight_results": []
         }
     
+    # Special handling for recommendations based on travel history
+    recommendation_triggers = [
+        "recommend",
+        "suggest",
+        "recommendation",
+        "ideas",
+        "where should i go",
+        "where to go",
+        "itinerary",
+        "plan a trip",
+    ]
+    history_context_triggers = [
+        "based on my travel history",
+        "based on my bookings",
+        "based on travel history",
+        "my travel history",
+        "travel history",
+        "my bookings",
+    ]
+
+    if any(t in message_lower for t in recommendation_triggers) and any(
+        t in message_lower for t in history_context_triggers
+    ):
+        print(f"[AGENT] Travel-history-based recommendation query detected for user {user_id}")
+        return {
+            "content": _recommendations_from_history(user_id, solo=("solo" in message_lower)),
+            "extracted_preferences": [],
+            "flight_results": [],
+        }
+
     # Special handling for travel history queries
-    if any(word in message_lower for word in ["show my travel history", "travel history", "my bookings", "my bookings", "where have i traveled", "where have i been"]):
-        print(f"[AGENT] Travel history query detected for user {user_id}")
-        travel_history = memory_manager.get_travel_history(user_id)
-        print(f"[AGENT] Retrieved {len(travel_history) if travel_history else 0} travel history items")
-        
-        if not travel_history:
-            travel_history = []
-        
-        # Filter to only include actual bookings, not searches
-        bookings_only = [
-            m for m in travel_history 
-            if m and isinstance(m, dict) and ("booked" in m.get("memory", "").lower() or "flight" in m.get("memory", "").lower())
+    if any(
+        word in message_lower
+        for word in [
+            "show my travel history",
+            "list my travel history",
+            "show travel history",
+            "show my bookings",
+            "my bookings",
+            "where have i traveled",
+            "where have i been",
+            "travel history",
         ]
-        print(f"[AGENT] Filtered to {len(bookings_only)} booked flights")
-        
-        if not bookings_only:
+    ) and not any(t in message_lower for t in recommendation_triggers):
+        print(f"[AGENT] Travel history query detected for user {user_id}")
+        travel_history_items = _get_travel_history_items(user_id, limit=50)
+        print(f"[AGENT] Returning {len(travel_history_items) if travel_history_items else 0} travel history items")
+
+        if not travel_history_items:
             return {
                 "content": "You haven't booked any flights yet. When you book a flight, it will appear in your travel history!",
                 "extracted_preferences": [],
                 "flight_results": [],
                 "travel_history": []
             }
-        
-        # Parse travel history for display
-        parsed_history = []
-        for booking in bookings_only:
-            if not booking:
-                continue
-            memory_str = booking.get("memory", "") if isinstance(booking, dict) else str(booking)
-            metadata = booking.get("metadata", {}) if isinstance(booking, dict) else {}
-            
-            # Try to extract structured data from metadata first, fall back to parsing memory string
-            parsed_booking = {
-                "origin": metadata.get("origin", "") if metadata else "",
-                "destination": metadata.get("destination", "") if metadata else "",
-                "airline": metadata.get("airline", "") if metadata else "",
-                "departure_date": metadata.get("departure_date", "") if metadata else "",
-                "cabin_class": metadata.get("cabin_class", "") if metadata else "",
-                "price": metadata.get("price", "") if metadata else "",
-                "currency": metadata.get("currency", "USD") if metadata else "USD",
-                "booked_at": metadata.get("booked_at", "") if metadata else "",
-                "memory": memory_str
-            }
-            parsed_history.append(parsed_booking)
-        
-        # Build a nice text summary (minimal since we'll show cards)
+
+        # Keep the assistant text minimal; the UI will render cards.
         history_lines = ["Here's your travel bookings:"]
-        
+
         return {
             "content": "\n".join(history_lines),
             "extracted_preferences": [],
             "flight_results": [],
-            "travel_history": parsed_history
+            "travel_history": travel_history_items
         }
     
     system_prompt = get_system_prompt_with_memory(user_id)

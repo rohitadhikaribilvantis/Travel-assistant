@@ -7,6 +7,60 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
 
+
+def _clean_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    v = value.strip()
+    return v or None
+
+
+def _clean_iata(value: object) -> str | None:
+    v = _clean_text(value)
+    if not v:
+        return None
+    v = v.upper()
+    return v if len(v) == 3 else None
+
+
+def _clean_carrier_code(value: object) -> str | None:
+    v = _clean_text(value)
+    if not v:
+        return None
+    v = v.upper()
+    return v if len(v) == 2 else None
+
+
+def _normalize_trip_type(value: object) -> str | None:
+    v = _clean_text(value)
+    if not v:
+        return None
+    lower = v.lower()
+    if "round" in lower and "trip" in lower:
+        return "Round Trip"
+    if "one" in lower and "way" in lower:
+        return "One Way"
+    return v
+
+
+def _normalize_airline_name(value: object) -> str | None:
+    v = _clean_text(value)
+    if not v:
+        return None
+    lower = v.lower()
+    if lower in {"a", "an", "the"}:
+        return None
+    # Strip trip-type suffixes accidentally captured into airline name
+    v = v.replace("_", " ")
+    v = v.strip()
+    v = __import__("re").sub(r"\s+(round\s*-?\s*trip|one\s*-?\s*way)\s*$", "", v, flags=__import__("re").IGNORECASE).strip()
+    if not v or v.lower() in {"a", "an", "the"}:
+        return None
+    # If it's actually a carrier code, don't store as name
+    if len(v) == 2 and v.isalpha() and v.upper() == v:
+        return None
+    return v
+
 # Database setup
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./travel_assistant.db")
 
@@ -261,14 +315,20 @@ class DatabaseStorage:
             now = datetime.now().isoformat()
             booked_at = booking.get("booked_at") or now
 
+            origin = _clean_iata(booking.get("origin")) or _clean_text(booking.get("origin"))
+            destination = _clean_iata(booking.get("destination")) or _clean_text(booking.get("destination"))
+            airline_code = _clean_carrier_code(booking.get("airline_code")) or _clean_carrier_code(booking.get("airline"))
+            airline_name = _normalize_airline_name(booking.get("airline_name")) or _normalize_airline_name(booking.get("airlineName"))
+            trip_type = _normalize_trip_type(booking.get("trip_type") or booking.get("tripType"))
+
             db_booking = BookingModel(
                 id=booking_id,
                 userId=user_id,
-                origin=booking.get("origin"),
-                destination=booking.get("destination"),
-                airlineCode=booking.get("airline") or booking.get("airline_code"),
-                airlineName=booking.get("airline_name") or booking.get("airline"),
-                tripType=booking.get("trip_type") or booking.get("tripType"),
+                origin=origin,
+                destination=destination,
+                airlineCode=airline_code,
+                airlineName=airline_name,
+                tripType=trip_type,
                 departureDate=booking.get("departure_date"),
                 departureTime=booking.get("departure_time"),
                 arrivalTime=booking.get("arrival_time"),
@@ -324,30 +384,54 @@ class DatabaseStorage:
             )
 
             result = []
+            seen: set[tuple] = set()
             for r in rows:
-                result.append(
-                    {
-                        "id": r.id,
-                        "origin": r.origin,
-                        "destination": r.destination,
-                        "airline": r.airlineName or r.airlineCode,
-                        "airline_code": r.airlineCode,
-                        "airline_name": r.airlineName,
-                        "tripType": r.tripType,
-                        "departure_date": r.departureDate,
-                        "departure_time": r.departureTime,
-                        "arrival_time": r.arrivalTime,
-                        "return_origin": r.returnOrigin,
-                        "return_destination": r.returnDestination,
-                        "return_date": r.returnDate,
-                        "return_departure_time": r.returnDepartureTime,
-                        "return_arrival_time": r.returnArrivalTime,
-                        "cabin_class": r.cabinClass,
-                        "price": float(r.price) if r.price else None,
-                        "currency": r.currency,
-                        "booked_at": r.bookedAt,
-                    }
+                origin = _clean_iata(r.origin) or _clean_text(r.origin)
+                destination = _clean_iata(r.destination) or _clean_text(r.destination)
+                airline_code = _clean_carrier_code(r.airlineCode)
+                airline_name = _normalize_airline_name(r.airlineName)
+                trip_type = _normalize_trip_type(r.tripType)
+
+                item = {
+                    "id": r.id,
+                    "origin": origin,
+                    "destination": destination,
+                    "airline": airline_name or airline_code,
+                    "airline_code": airline_code,
+                    "airline_name": airline_name,
+                    "tripType": trip_type,
+                    "departure_date": _clean_text(r.departureDate),
+                    "departure_time": _clean_text(r.departureTime),
+                    "arrival_time": _clean_text(r.arrivalTime),
+                    "return_origin": _clean_iata(r.returnOrigin) or _clean_text(r.returnOrigin),
+                    "return_destination": _clean_iata(r.returnDestination) or _clean_text(r.returnDestination),
+                    "return_date": _clean_text(r.returnDate),
+                    "return_departure_time": _clean_text(r.returnDepartureTime),
+                    "return_arrival_time": _clean_text(r.returnArrivalTime),
+                    "cabin_class": _clean_text(r.cabinClass),
+                    "price": float(r.price) if r.price else None,
+                    "currency": _clean_text(r.currency),
+                    "booked_at": _clean_text(r.bookedAt),
+                }
+
+                dedupe_key = (
+                    (item.get("origin") or "").upper(),
+                    (item.get("destination") or "").upper(),
+                    item.get("departure_date") or "",
+                    item.get("return_date") or "",
+                    item.get("departure_time") or "",
+                    item.get("return_departure_time") or "",
+                    item.get("airline_code") or item.get("airline_name") or item.get("airline") or "",
+                    item.get("cabin_class") or "",
+                    str(item.get("price") or ""),
+                    item.get("tripType") or "",
                 )
+                if any(v for v in dedupe_key) and dedupe_key in seen:
+                    continue
+                if any(v for v in dedupe_key):
+                    seen.add(dedupe_key)
+
+                result.append(item)
             return result
         finally:
             db.close()

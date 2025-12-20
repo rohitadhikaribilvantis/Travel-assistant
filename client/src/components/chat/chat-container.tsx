@@ -35,7 +35,12 @@ export function ChatContainer({ messages, isLoading, onBooking }: ChatContainerP
       origin: extractFromMessages(/from|depart|leave|origin.*?([A-Z]{3})/i),
       destination: extractFromMessages(/to|arrive|destination.*?([A-Z]{3})/i),
       departureDate: extractFromMessages(/(?:on|depart|leave).*?(\d{4}-\d{2}-\d{2}|\w+ \d{1,2})/i),
-      passengers: extractFromMessages(/(\d+)\s*(?:passenger|person|traveler|pax)/i),
+      passengers: (() => {
+        const raw = extractFromMessages(/(\d+)\s*(?:passenger|person|traveler|pax)/i);
+        if (!raw) return undefined;
+        const n = Number.parseInt(raw, 10);
+        return Number.isFinite(n) ? n : undefined;
+      })(),
       cabinClass: extractFromMessages(/(economy|business|first|premium)/i),
     };
   };
@@ -51,6 +56,7 @@ export function ChatContainer({ messages, isLoading, onBooking }: ChatContainerP
   // Get last flight results message
   const lastFlightMessage = messages.findLast((m) => m.flightResults?.length);
   const hasFlights = lastFlightMessage && lastFlightMessage.flightResults.length > 0;
+  const journeyInfo = hasFlights ? extractJourneyInfo() : undefined;
 
   if (messages.length === 0 && !isLoading) {
     return <EmptyState />;
@@ -61,7 +67,7 @@ export function ChatContainer({ messages, isLoading, onBooking }: ChatContainerP
       <ScrollArea className="flex-1" ref={scrollRef}>
         <div className="mx-auto max-w-4xl py-4 px-4">
           {/* Journey Summary */}
-          {hasFlights && <JourneySummary summary={extractJourneyInfo()} />}
+          {hasFlights && journeyInfo && <JourneySummary summary={journeyInfo} />}
 
           {/* Messages */}
           {messages.map((message) => (
@@ -74,6 +80,7 @@ export function ChatContainer({ messages, isLoading, onBooking }: ChatContainerP
                   : message.flightResults
               }}
               userAvatar={user?.avatar}
+              journeyInfo={journeyInfo}
               onShowFilter={() => {
                 setCurrentFlights(message.flightResults || null);
                 setShowFilter(true);

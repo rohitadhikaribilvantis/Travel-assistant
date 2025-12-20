@@ -8,6 +8,7 @@ import { useAuth } from "@/hooks/use-auth";
 interface FlightCardProps {
   flight: FlightOffer;
   index: number;
+  passengers?: number;
   onBooking?: () => void;
 }
 
@@ -31,7 +32,7 @@ function formatDate(dateTimeString: string): string {
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-export function FlightCard({ flight, index, onBooking }: FlightCardProps) {
+export function FlightCard({ flight, index, passengers, onBooking }: FlightCardProps) {
   const { token } = useAuth();
   const outbound = flight.itineraries[0];
   const returnFlight = flight.itineraries[1];
@@ -39,34 +40,51 @@ export function FlightCard({ flight, index, onBooking }: FlightCardProps) {
   const lastSegment = outbound.segments[outbound.segments.length - 1];
   const stops = outbound.segments.length - 1;
 
-  const buildBookingUrl = (website: string): string => {
-    const carrier = firstSegment.carrierCode;
-    
-    // Airline-specific booking homepage URLs (simple and reliable)
-    const airlineUrls: Record<string, string> = {
-      "UA": "https://www.united.com",
-      "AA": "https://www.aa.com",
-      "DL": "https://www.delta.com",
-      "SW": "https://www.southwest.com",
-      "B6": "https://www.jetblue.com",
-      "AS": "https://www.alaskaair.com",
-      "NK": "https://www.spirit.com",
-      "F9": "https://www.frontier.com",
-      "AC": "https://www.aircanada.com",
-      "BA": "https://www.britishairways.com",
-      "LH": "https://www.lufthansa.com",
-      "AF": "https://www.airfrance.com",
-      "KL": "https://www.klm.com",
-      "IB": "https://www.iberia.com",
-      "EK": "https://www.emirates.com",
-      "QF": "https://www.qantas.com",
-      "SQ": "https://www.singaporeair.com",
-      "NH": "https://www.ana.co.jp/en",
-      "JL": "https://www.jal.co.jp/en",
-    };
-    
-    // Return airline-specific URL if available
-    return airlineUrls[carrier] || `https://www.${carrier.toLowerCase()}.com`;
+  const buildPrefilledBookingUrl = (): string => {
+    const origin = firstSegment.departure.iataCode;
+    const destination = lastSegment.arrival.iataCode;
+    const departureDate = firstSegment.departure.at.split("T")[0];
+    const returnDate = returnFlight?.segments?.[0]?.departure?.at?.split("T")[0];
+    const pax = passengers && passengers > 0 ? passengers : 1;
+    const cabin = (flight.travelClass || "").replaceAll("_", " ").toLowerCase();
+
+    const airlineName = firstSegment.carrierName || firstSegment.carrierCode;
+    const outboundFlightNo = `${firstSegment.carrierCode} ${firstSegment.number}`.trim();
+    const outboundDepartTime = formatTime(firstSegment.departure.at);
+    const outboundArriveTime = formatTime(lastSegment.arrival.at);
+
+    const returnFirst = returnFlight?.segments?.[0];
+    const returnLast = returnFlight?.segments?.[returnFlight.segments.length - 1];
+    const returnFlightNo = returnFirst ? `${returnFirst.carrierCode} ${returnFirst.number}`.trim() : "";
+    const returnDepartTime = returnFirst ? formatTime(returnFirst.departure.at) : "";
+    const returnArriveTime = returnLast ? formatTime(returnLast.arrival.at) : "";
+
+    const totalStops = outbound.segments.length - 1;
+    const stopsText = totalStops === 0 ? "nonstop" : `${totalStops} stop${totalStops > 1 ? "s" : ""}`;
+
+    const priceTotal = Number.parseFloat(flight.price.total);
+    const currency = flight.price.currency || "USD";
+    const priceText = Number.isFinite(priceTotal) ? `${currency} ${Math.round(priceTotal)}` : "";
+
+    // Airline deep links are inconsistent and often require session state.
+    // Google Flights reliably accepts a free-form query string.
+    const queryParts = [
+      `Flights from ${origin} to ${destination}`,
+      `on ${departureDate}`,
+      returnDate ? `returning ${returnDate}` : "",
+      `${pax} passenger${pax > 1 ? "s" : ""}`,
+      cabin ? `in ${cabin}` : "",
+      airlineName ? `with ${airlineName}` : "",
+      outboundFlightNo ? `outbound ${outboundFlightNo}` : "",
+      `(${outboundDepartTime} - ${outboundArriveTime})`,
+      returnDate && returnFlightNo ? `return ${returnFlightNo}` : "",
+      returnDate && returnDepartTime && returnArriveTime ? `(${returnDepartTime} - ${returnArriveTime})` : "",
+      stopsText ? `${stopsText}` : "",
+      priceText ? `price ${priceText}` : "",
+    ].filter(Boolean);
+
+    const q = queryParts.join(" ");
+    return `https://www.google.com/travel/flights?q=${encodeURIComponent(q)}`;
   };
 
   // Get airline name for button text
@@ -131,7 +149,7 @@ export function FlightCard({ flight, index, onBooking }: FlightCardProps) {
     }
 
     // Open booking
-    window.open(buildBookingUrl("airline"), "_blank");
+    window.open(buildPrefilledBookingUrl(), "_blank");
   };
 
   const airlineDisplay = getAirlineDisplay();

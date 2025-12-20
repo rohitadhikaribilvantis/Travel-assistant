@@ -28,6 +28,7 @@ interface Booking {
 
 interface TravelHistoryDisplayProps {
   bookings: Booking[];
+  compact?: boolean;
 }
 
 // Airline code to name mapping
@@ -59,11 +60,21 @@ const AIRLINE_NAMES: Record<string, string> = {
   "WN": "Southwest",
 };
 
+function cleanAirlineName(value: string | undefined): string {
+  if (!value) return "";
+  const v = value.trim();
+  if (!v) return "";
+  const lower = v.toLowerCase();
+  if (lower === "a" || lower === "an" || lower === "the") return "";
+  // Remove accidental suffixes like "round-trip" captured into the airline field.
+  return v.replace(/\s+(round\s*-?\s*trip|one\s*-?\s*way)\s*$/i, "").trim();
+}
+
 function getAirlineName(code: string): string {
   return AIRLINE_NAMES[code] || code;
 }
 
-export function TravelHistoryDisplay({ bookings }: TravelHistoryDisplayProps) {
+export function TravelHistoryDisplay({ bookings, compact = false }: TravelHistoryDisplayProps) {
   if (!bookings || bookings.length === 0) {
     return (
       <Card className="bg-muted/30">
@@ -86,7 +97,7 @@ export function TravelHistoryDisplay({ bookings }: TravelHistoryDisplayProps) {
       destination: booking.destination || "",
       departure_date: booking.departure_date || "",
       airline:
-        booking.airline_name || booking.airline || booking.airline_code || "",
+        cleanAirlineName(booking.airline_name) || cleanAirlineName(booking.airline) || booking.airline_code || "",
     };
 
     // Helper: parse as much as possible from memory text.
@@ -130,12 +141,12 @@ export function TravelHistoryDisplay({ bookings }: TravelHistoryDisplayProps) {
       let airlineName: string | undefined;
       const bookedPrefixMatch = normalizedMemory.match(/^(?:Booked\s+flight:\s*)?(.+?)\s+([A-Z]{3})\s*→\s*[A-Z]{3}/);
       if (bookedPrefixMatch) {
-        airlineName = bookedPrefixMatch[1]?.trim();
+        airlineName = cleanAirlineName(bookedPrefixMatch[1]?.trim());
       }
       if (!airlineName) {
         const traveledMatch = normalizedMemory.match(/\bon\s+(.+?)\s+from\s+[A-Z]{3}\s+to\s+[A-Z]{3}\b/i);
         if (traveledMatch) {
-          airlineName = traveledMatch[1]?.trim();
+          airlineName = cleanAirlineName(traveledMatch[1]?.trim());
         }
       }
 
@@ -145,13 +156,13 @@ export function TravelHistoryDisplay({ bookings }: TravelHistoryDisplayProps) {
       if (!airlineName) {
         const bookedAirlineMatch = normalizedMemory.match(/\bbooked\s+(?:an?\s+)?(.+?)\s+flight\b/i);
         if (bookedAirlineMatch) {
-          airlineName = bookedAirlineMatch[1]?.trim();
+          airlineName = cleanAirlineName(bookedAirlineMatch[1]?.trim());
         }
       }
       if (!airlineName) {
         const leadingAirlineMatch = normalizedMemory.match(/^(.+?)\s+flight\s+from\s+/i);
         if (leadingAirlineMatch) {
-          airlineName = leadingAirlineMatch[1]?.trim();
+          airlineName = cleanAirlineName(leadingAirlineMatch[1]?.trim());
         }
       }
 
@@ -256,7 +267,7 @@ export function TravelHistoryDisplay({ bookings }: TravelHistoryDisplayProps) {
       }
 
       return {
-        airline: airlineCode ? getAirlineName(airlineCode) : (airlineName || ""),
+        airline: airlineCode ? getAirlineName(airlineCode) : (cleanAirlineName(airlineName) || ""),
         origin: routeMatch?.[1] || "",
         destination: routeMatch?.[2] || "",
         departure_date: finalDate || "",
@@ -307,8 +318,8 @@ export function TravelHistoryDisplay({ bookings }: TravelHistoryDisplayProps) {
   };
 
   return (
-    <div className="space-y-3 w-full">
-      <div className="space-y-3">
+    <div className={compact ? "space-y-2 w-full" : "space-y-3 w-full"}>
+      <div className={compact ? "space-y-2" : "space-y-3"}>
         {bookings.map((booking, idx) => {
           const parsed = parseBooking(booking);
           
@@ -322,15 +333,21 @@ export function TravelHistoryDisplay({ bookings }: TravelHistoryDisplayProps) {
           const displayTripType = parsed.tripType || (parsed.return_date ? "Round Trip" : "One Way");
 
           return (
-            <Card key={idx} className="overflow-hidden hover:shadow-lg transition-all duration-200 border-l-4 border-l-blue-500 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900 dark:to-slate-800">
-              <CardHeader className="pb-2">
+            <Card
+              key={idx}
+              className={
+                "overflow-hidden transition-all duration-200 border-l-4 border-l-blue-500 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900 dark:to-slate-800 " +
+                (compact ? "hover:shadow-md" : "hover:shadow-lg")
+              }
+            >
+              <CardHeader className={compact ? "pb-1" : "pb-2"}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-3 flex-1 min-w-0">
-                    <div className="bg-blue-100 dark:bg-blue-900 p-2 rounded-lg flex-shrink-0 mt-1">
-                      <Plane className="w-4 h-4 text-blue-600 dark:text-blue-300" />
+                    <div className={compact ? "bg-blue-100 dark:bg-blue-900 p-1.5 rounded-lg flex-shrink-0 mt-1" : "bg-blue-100 dark:bg-blue-900 p-2 rounded-lg flex-shrink-0 mt-1"}>
+                      <Plane className={compact ? "w-3.5 h-3.5 text-blue-600 dark:text-blue-300" : "w-4 h-4 text-blue-600 dark:text-blue-300"} />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <CardTitle className="text-base font-bold text-slate-900 dark:text-white mb-1">
+                      <CardTitle className={compact ? "text-sm font-bold text-slate-900 dark:text-white mb-0.5" : "text-base font-bold text-slate-900 dark:text-white mb-1"}>
                         {hasRoute ? (
                           <>
                             {parsed.origin} <span className="text-blue-500 mx-1">→</span> {parsed.destination}
@@ -339,9 +356,9 @@ export function TravelHistoryDisplay({ bookings }: TravelHistoryDisplayProps) {
                           <span className="truncate">Travel Booking</span>
                         )}
                       </CardTitle>
-                      {parsed.airline && <p className="text-xs font-medium text-blue-600 dark:text-blue-400">{parsed.airline}</p>}
+                      {parsed.airline && <p className={compact ? "text-[11px] font-medium text-blue-600 dark:text-blue-400" : "text-xs font-medium text-blue-600 dark:text-blue-400"}>{parsed.airline}</p>}
                       {parsed.departure_time && parsed.arrival_time && (
-                        <p className="text-xs text-muted-foreground">
+                        <p className={compact ? "text-[11px] text-muted-foreground" : "text-xs text-muted-foreground"}>
                           {parsed.departure_time} - {parsed.arrival_time}
                         </p>
                       )}
@@ -354,19 +371,19 @@ export function TravelHistoryDisplay({ bookings }: TravelHistoryDisplayProps) {
                   )}
                 </div>
               </CardHeader>
-              <CardContent className="pt-2">
-                <div className="grid grid-cols-2 gap-3">
+              <CardContent className={compact ? "pt-1" : "pt-2"}>
+                <div className={compact ? "grid grid-cols-2 gap-2" : "grid grid-cols-2 gap-3"}>
                   {(parsed.departure_date || parsed.departure_time) && (
-                    <div className="flex items-start gap-2 p-2 bg-slate-100 dark:bg-slate-700 rounded-lg col-span-2">
-                      <Calendar className="w-4 h-4 text-slate-600 dark:text-slate-300 flex-shrink-0 mt-0.5" />
+                    <div className={compact ? "flex items-start gap-2 p-2 bg-slate-100 dark:bg-slate-700 rounded-lg col-span-2" : "flex items-start gap-2 p-2 bg-slate-100 dark:bg-slate-700 rounded-lg col-span-2"}>
+                      <Calendar className={compact ? "w-3.5 h-3.5 text-slate-600 dark:text-slate-300 flex-shrink-0 mt-0.5" : "w-4 h-4 text-slate-600 dark:text-slate-300 flex-shrink-0 mt-0.5"} />
                       <div className="min-w-0">
-                        <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">{displayTripType}</p>
-                        <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                        <p className={compact ? "text-[11px] text-slate-500 dark:text-slate-400 font-medium" : "text-xs text-slate-500 dark:text-slate-400 font-medium"}>{displayTripType}</p>
+                        <p className={compact ? "text-[11px] font-semibold text-slate-900 dark:text-white truncate" : "text-xs font-semibold text-slate-900 dark:text-white truncate"}>
                           Depart: {parsed.departure_date ? new Date(parsed.departure_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ""}
                           {parsed.departure_time ? ` • ${parsed.departure_time}` : ""}
                         </p>
                         {(parsed.return_date || parsed.return_departure_time) && (
-                          <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                          <p className={compact ? "text-[11px] font-semibold text-slate-900 dark:text-white truncate" : "text-xs font-semibold text-slate-900 dark:text-white truncate"}>
                             Return: {parsed.return_date ? new Date(parsed.return_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ""}
                             {parsed.return_departure_time ? ` • ${parsed.return_departure_time}` : ""}
                           </p>
@@ -376,10 +393,10 @@ export function TravelHistoryDisplay({ bookings }: TravelHistoryDisplayProps) {
                   )}
                   {parsed.price && (
                     <div className="flex items-start gap-2 p-2 bg-green-50 dark:bg-green-900/20 rounded-lg">
-                      <DollarSign className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+                      <DollarSign className={compact ? "w-3.5 h-3.5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" : "w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5"} />
                       <div className="min-w-0">
-                        <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Price</p>
-                        <p className="text-xs font-semibold text-green-700 dark:text-green-400">
+                        <p className={compact ? "text-[11px] text-slate-500 dark:text-slate-400 font-medium" : "text-xs text-slate-500 dark:text-slate-400 font-medium"}>Price</p>
+                        <p className={compact ? "text-[11px] font-semibold text-green-700 dark:text-green-400" : "text-xs font-semibold text-green-700 dark:text-green-400"}>
                           {parsed.currency || 'USD'} {parsed.price.toLocaleString()}
                         </p>
                       </div>

@@ -18,6 +18,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 
 import type { CurrentPreferences } from "@/hooks/use-chat";
 
@@ -46,6 +54,8 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
   const [travelHistoryOpen, setTravelHistoryOpen] = useState(false);
   const [bookings, setBookings] = useState<any[]>([]);
   const [isLoadingBookings, setIsLoadingBookings] = useState(false);
+  const [travelHistoryPage, setTravelHistoryPage] = useState(1);
+  const TRAVEL_HISTORY_PAGE_SIZE = 8;
   const [directFlightsOnly, setDirectFlightsOnly] = useState(false);
   const [avoidRedEye, setAvoidRedEye] = useState(false);
   const [preferredTime, setPreferredTime] = useState<string>("");
@@ -79,6 +89,7 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
   // Fetch bookings when travel history sheet opens
   useEffect(() => {
     if (travelHistoryOpen && token) {
+      setTravelHistoryPage(1);
       setIsLoadingBookings(true);
       fetch("http://localhost:8000/api/memory/travel-history", {
         headers: { "Authorization": `Bearer ${token}` }
@@ -94,6 +105,13 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
         });
     }
   }, [travelHistoryOpen, token]);
+
+  const totalTravelHistoryPages = Math.max(1, Math.ceil((bookings?.length || 0) / TRAVEL_HISTORY_PAGE_SIZE));
+  const travelHistoryPageSafe = Math.min(Math.max(1, travelHistoryPage), totalTravelHistoryPages);
+  const pagedBookings = (bookings || []).slice(
+    (travelHistoryPageSafe - 1) * TRAVEL_HISTORY_PAGE_SIZE,
+    travelHistoryPageSafe * TRAVEL_HISTORY_PAGE_SIZE
+  );
 
   const refreshBookings = useCallback(() => {
     if (token) {
@@ -656,15 +674,6 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
           </SheetContent>
         </Sheet>
 
-        {/* Travel History Sheet */}
-        <Sheet open={false} onOpenChange={() => {}}>
-          <SheetContent side="right" className="w-full sm:w-[500px] overflow-y-auto">
-            <SheetHeader>
-              <SheetTitle>Travel History</SheetTitle>
-            </SheetHeader>
-          </SheetContent>
-        </Sheet>
-
         {/* Travel History */}
         <Sheet open={travelHistoryOpen} onOpenChange={setTravelHistoryOpen}>
           <Button
@@ -676,17 +685,53 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
           >
             📚
           </Button>
-          <SheetContent side="right" className="w-full sm:w-[500px]">
+          <SheetContent side="right" className="w-full sm:w-[500px] flex flex-col">
             <SheetHeader>
               <SheetTitle>Travel History</SheetTitle>
             </SheetHeader>
-            <div className="py-4">
+            <div className="flex items-center justify-between gap-3 py-2">
+              <p className="text-xs text-muted-foreground">
+                {bookings?.length ? `${bookings.length} bookings` : ""}
+              </p>
+              {totalTravelHistoryPages > 1 && (
+                <p className="text-xs text-muted-foreground">
+                  Page {travelHistoryPageSafe} / {totalTravelHistoryPages}
+                </p>
+              )}
+            </div>
+            <div className="flex-1 overflow-hidden pb-4">
               {isLoadingBookings ? (
                 <p className="text-sm text-muted-foreground">Loading...</p>
               ) : (
-                <TravelHistoryDisplay bookings={bookings} />
+                <ScrollArea className="h-full pr-3">
+                  <TravelHistoryDisplay bookings={pagedBookings} compact />
+                </ScrollArea>
               )}
             </div>
+            {totalTravelHistoryPages > 1 && (
+              <Pagination className="pb-2">
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setTravelHistoryPage((p) => Math.max(1, p - 1));
+                      }}
+                    />
+                  </PaginationItem>
+                  <PaginationItem>
+                    <PaginationNext
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setTravelHistoryPage((p) => Math.min(totalTravelHistoryPages, p + 1));
+                      }}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            )}
           </SheetContent>
         </Sheet>
 

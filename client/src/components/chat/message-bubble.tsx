@@ -11,11 +11,15 @@ import { Button } from "@/components/ui/button";
 interface MessageBubbleProps {
   message: ChatMessage;
   userAvatar?: string;
+  journeyInfo?: {
+    passengers?: number;
+    cabinClass?: string;
+  };
   onShowFilter?: () => void;
   onBooking?: () => void;
 }
 
-export function MessageBubble({ message, userAvatar, onShowFilter, onBooking }: MessageBubbleProps) {
+export function MessageBubble({ message, userAvatar, journeyInfo, onShowFilter, onBooking }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
   const hasFlights = message.flightResults && message.flightResults.length > 0;
@@ -172,7 +176,13 @@ export function MessageBubble({ message, userAvatar, onShowFilter, onBooking }: 
                         </h3>
                         <div className="flex flex-col gap-4">
                           {flights.map((flight, index) => (
-                            <FlightCard key={`${flight.id}-${index}`} flight={flight} index={index} onBooking={onBooking} />
+                            <FlightCard
+                              key={`${flight.id}-${index}`}
+                              flight={flight}
+                              index={index}
+                              passengers={journeyInfo?.passengers}
+                              onBooking={onBooking}
+                            />
                           ))}
                         </div>
                       </div>
