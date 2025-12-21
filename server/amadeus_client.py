@@ -15,6 +15,7 @@ class AmadeusClient:
         self.access_token = None
         self.token_expires_at = None
         self._iata_display_cache: dict[str, str] = {}
+        self._iata_country_cache: dict[str, str] = {}
         
     def _get_access_token(self) -> str:
         """Get or refresh the access token."""
@@ -118,6 +119,97 @@ class AmadeusClient:
             return resolved
         except Exception:
             return fallback.get(code, code)
+
+    def resolve_airport_country(self, iata_code: str) -> Optional[str]:
+        """Resolve an airport/city IATA code to a country name when possible."""
+        if not isinstance(iata_code, str):
+            return None
+        code = iata_code.strip().upper()
+        if len(code) != 3:
+            return None
+
+        cached = self._iata_country_cache.get(code)
+        if cached:
+            return cached
+
+        # Fallback map for common codes we see during local testing.
+        # This is only used when the API fails or cannot find an exact IATA match.
+        fallback = {
+            "IAH": "United States",
+            "JFK": "United States",
+            "LAX": "United States",
+            "SFO": "United States",
+            "ORD": "United States",
+            "DFW": "United States",
+            "NRT": "Japan",
+            "HND": "Japan",
+            "SIN": "Singapore",
+            "KTM": "Nepal",
+            "DEL": "India",
+            "BOM": "India",
+            "LHR": "United Kingdom",
+            "CDG": "France",
+            "DXB": "United Arab Emirates",
+        }
+
+        url = f"{self.BASE_URL}/v1/reference-data/locations"
+        params = {
+            # Restrict to AIRPORT to reduce ambiguous keyword matches.
+            "subType": "AIRPORT",
+            "keyword": code,
+            "page[limit]": 20,
+        }
+
+        try:
+            headers = self._get_headers()
+            resp = requests.get(url, headers=headers, params=params, timeout=10)
+            if resp.status_code != 200:
+                return fallback.get(code)
+
+            payload = resp.json() or {}
+            data = payload.get("data") or []
+            if not data:
+                return fallback.get(code)
+
+            # Only accept an exact iataCode match. Do NOT guess with data[0],
+            # because keyword search results can include unrelated airports.
+            exact_matches: list[dict] = []
+            for candidate in data:
+                if not isinstance(candidate, dict):
+                    continue
+                if str(candidate.get("iataCode", "")).upper() == code:
+                    exact_matches.append(candidate)
+
+            if not exact_matches:
+                return fallback.get(code)
+
+            # Prefer entries that include a full country name.
+            def _score(c: dict) -> int:
+                addr = (c.get("address") or {}) if isinstance(c, dict) else {}
+                has_country_name = bool(addr.get("countryName"))
+                has_country_code = bool(addr.get("countryCode"))
+                return (2 if has_country_name else 0) + (1 if has_country_code else 0)
+
+            item = sorted(exact_matches, key=_score, reverse=True)[0]
+
+            item = item or {}
+            address = item.get("address") or {}
+            country = address.get("countryName") or address.get("countryCode")
+            if not country:
+                return fallback.get(code)
+
+            country = str(country).strip()
+            if not country:
+                return fallback.get(code)
+
+            # Normalize casing for readability.
+            if len(country) > 2:
+                country = country.title()
+
+            self._iata_country_cache[code] = country
+            return country
+        except Exception:
+            return fallback.get(code)
     
     def search_flights(
         self,

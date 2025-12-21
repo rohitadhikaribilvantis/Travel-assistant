@@ -75,16 +75,22 @@ export function ChatContainer({ messages, isLoading, onBooking }: ChatContainerP
               key={message.id} 
               message={{
                 ...message,
-                flightResults: showFilter && filteredFlights && currentFlights === message.flightResults
+                flightResults: filteredFlights && currentFlights === message.flightResults
                   ? filteredFlights
                   : message.flightResults
               }}
               userAvatar={user?.avatar}
               journeyInfo={journeyInfo}
               onShowFilter={() => {
-                setCurrentFlights(message.flightResults || null);
+                const nextFlights = message.flightResults || null;
+                const isSameFlightList = currentFlights === nextFlights;
+                setCurrentFlights(nextFlights);
                 setShowFilter(true);
-                setFilteredFlights(null);
+                // Preserve refinements when re-opening for the same flight list.
+                // Reset only when switching to a different set of results.
+                if (!isSameFlightList) {
+                  setFilteredFlights(null);
+                }
               }}
               onBooking={onBooking}
             />
@@ -95,15 +101,12 @@ export function ChatContainer({ messages, isLoading, onBooking }: ChatContainerP
       </ScrollArea>
 
       {/* Flight Filter Panel */}
-      {showFilter && currentFlights && currentFlights.length > 0 && (
-        <div className="hidden lg:block w-80 border-l">
+      {currentFlights && currentFlights.length > 0 && (
+        <div className={showFilter ? "hidden lg:block w-80 border-l" : "hidden"}>
           <FlightFilter
             flights={currentFlights}
             onFilter={setFilteredFlights}
-            onClose={() => {
-              setShowFilter(false);
-              setFilteredFlights(null);
-            }}
+            onClose={() => setShowFilter(false)}
           />
         </div>
       )}

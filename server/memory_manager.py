@@ -442,6 +442,94 @@ class TravelMemoryManager:
     def get_budget_preferences(self, user_id: str) -> List[Dict]:
         """Get budget and pricing preferences."""
         return self.get_user_memories(user_id, query="budget price cost expensive cheap")
+
+    @staticmethod
+    def _strip_preference_wrappers(memory_text: str) -> str:
+        text = (memory_text or "").strip()
+        # Remove common wrappers added by our own memory formatting.
+        text = re.sub(r"^\s*(travel\s+preference|preference)\s*:\s*", "", text, flags=re.IGNORECASE)
+        # Remove trailing type annotation wrapper.
+        text = re.sub(r"\s*\(\s*type\s*:\s*[^)]+\)\s*$", "", text, flags=re.IGNORECASE)
+        return text.strip()
+
+    @staticmethod
+    def _canonicalize_preference_text(core_text: str) -> str:
+        """Convert verbose/free-form preference sentences into canonical labels."""
+        t = (core_text or "").strip()
+        lower = t.lower()
+
+        # Cabin class
+        cabin = None
+        if "premium economy" in lower or ("premium" in lower and "economy" in lower):
+            cabin = "Premium Economy"
+        elif "business" in lower:
+            cabin = "Business"
+        elif "first" in lower:
+            cabin = "First"
+        elif "economy" in lower:
+            cabin = "Economy"
+        if cabin and ("class" in lower or "cabin" in lower or "flights" in lower):
+            return f"Cabin class: {cabin}"
+
+        # Trip type
+        if "one-way" in lower or "one way" in lower:
+            return "Trip type: One-way"
+        if "round trip" in lower or "round-trip" in lower or "return" in lower:
+            return "Trip type: Round trip"
+
+        # Stops / flight type
+        if "nonstop" in lower or "non-stop" in lower or "direct" in lower:
+            return "Stops: Direct only"
+        if "layover" in lower or "stopover" in lower or "stops" in lower:
+            if any(kw in lower for kw in ["avoid", "no ", "without", "hate"]):
+                return "Stops: Avoid layovers"
+            if any(kw in lower for kw in ["ok", "okay", "fine", "don't mind", "dont mind", "willing"]):
+                return "Stops: Layovers OK"
+
+        # Departure time
+        if "morning" in lower:
+            return "Departure time: Morning"
+        if "afternoon" in lower:
+            return "Departure time: Afternoon"
+        if "evening" in lower:
+            return "Departure time: Evening"
+
+        # Red-eye
+        if "red-eye" in lower or "red eye" in lower:
+            if any(kw in lower for kw in ["avoid", "no ", "never", "hate"]):
+                return "Red-eye: Avoid"
+            return "Red-eye: Prefer to avoid"
+
+        # Seats
+        if "window" in lower:
+            return "Seat: Window"
+        if "aisle" in lower:
+            return "Seat: Aisle"
+        if "exit row" in lower:
+            return "Seat: Exit row"
+        if "middle" in lower or "center" in lower:
+            if any(kw in lower for kw in ["avoid", "no ", "never", "hate", "don't like", "dont like"]):
+                return "Seat: Avoid middle"
+
+        # Baggage
+        if "carry-on" in lower or "cabin baggage" in lower:
+            return "Baggage: Carry-on only"
+        if "checked" in lower:
+            return "Baggage: Checked bag"
+        if "extra baggage" in lower:
+            return "Baggage: Extra baggage"
+
+        # Passenger
+        if "traveling alone" in lower or "travelling alone" in lower or "solo" in lower:
+            return "Travel: Solo"
+        if "with family" in lower or "kids" in lower or "children" in lower:
+            return "Travel: With family"
+        if "with partner" in lower or "spouse" in lower:
+            return "Travel: With partner"
+
+        # Airline: keep as-is (too many variations); just strip leading phrasing.
+        t = re.sub(r"^\s*i\s+(prefer|like|love|want|need)\s+", "", t, flags=re.IGNORECASE).strip()
+        return t
     
     def summarize_preferences(self, user_id: str, include_ids: bool = False) -> Dict:
         """
@@ -470,6 +558,8 @@ class TravelMemoryManager:
                 "other": []
             }
             
+            seen_by_category: Dict[str, set] = {k: set() for k in summary.keys()}
+
             for mem in all_memories:
                 memory_text = mem.get("memory", "") if isinstance(mem, dict) else str(mem)
                 if not memory_text:
@@ -517,52 +607,81 @@ class TravelMemoryManager:
                     print(f"[MEMORY] Skipping flight booking pattern (not a preference): '{memory_text}'")
                     continue
                 
+                # Produce a canonical display string, but preserve the raw memory for deletion.
+                core_text = self._strip_preference_wrappers(memory_text)
+                display_text = self._canonicalize_preference_text(core_text)
+                display_lower = display_text.lower()
+
                 # Create entry (with or without ID)
                 if include_ids:
-                    entry = {"id": memory_id, "text": memory_text, "memory": memory_text}
+                    entry = {"id": memory_id, "text": display_text, "memory": memory_text}
                 else:
-                    entry = memory_text
+                    entry = display_text
                 
                 print(f"[MEMORY] Processing memory: '{memory_text}' (lower: '{memory_lower}')")
                 
                 # Categorize the memory - Check cabin class FIRST since it's most specific
-                if any(word in memory_lower for word in ["business", "economy", "premium", "first"]) and any(word in memory_lower for word in ["class", "cabin"]):
+                if any(word in display_lower for word in ["business", "economy", "premium", "first"]) and any(word in display_lower for word in ["class", "cabin"]):
                     print(f"  -> Categorized as CABIN CLASS")
-                    summary["cabin_class"].append(entry)
-                elif any(word in memory_lower for word in ["red-eye", "red eye"]):
+                    if display_lower not in seen_by_category["cabin_class"]:
+                        seen_by_category["cabin_class"].add(display_lower)
+                        summary["cabin_class"].append(entry)
+                elif any(word in display_lower for word in ["red-eye", "red eye", "red-eye:"]):
                     print(f"  -> Categorized as RED EYE")
-                    summary["red_eye"].append(entry)
-                elif any(word in memory_lower for word in ["round trip", "one-way", "round-trip", "one way"]):
+                    if display_lower not in seen_by_category["red_eye"]:
+                        seen_by_category["red_eye"].add(display_lower)
+                        summary["red_eye"].append(entry)
+                elif any(word in display_lower for word in ["round trip", "one-way", "round-trip", "one way", "trip type:"]):
                     print(f"  -> Categorized as TRIP TYPE")
-                    summary["trip_type"].append(entry)
-                elif any(word in memory_lower for word in ["direct", "non-stop", "layover", "stop"]):
+                    if display_lower not in seen_by_category["trip_type"]:
+                        seen_by_category["trip_type"].add(display_lower)
+                        summary["trip_type"].append(entry)
+                elif any(word in display_lower for word in ["direct", "non-stop", "layover", "stop", "stops:"]):
                     print(f"  -> Categorized as FLIGHT TYPE")
-                    summary["flight_type"].append(entry)
-                elif any(word in memory_lower for word in ["morning", "afternoon", "evening", "depart"]):
+                    if display_lower not in seen_by_category["flight_type"]:
+                        seen_by_category["flight_type"].add(display_lower)
+                        summary["flight_type"].append(entry)
+                elif any(word in display_lower for word in ["morning", "afternoon", "evening", "depart", "departure time:"]):
                     print(f"  -> Categorized as TIME")
-                    summary["departure_time"].append(entry)
-                elif any(word in memory_lower for word in ["traveling alone", "solo", "travel alone", "fly alone", "traveling with family", "traveling with kids", "traveling with children", "traveling with partner", "traveling with spouse", "family trip"]):
+                    if display_lower not in seen_by_category["departure_time"]:
+                        seen_by_category["departure_time"].add(display_lower)
+                        summary["departure_time"].append(entry)
+                elif any(word in display_lower for word in ["traveling alone", "solo", "travel alone", "fly alone", "traveling with family", "traveling with kids", "traveling with children", "traveling with partner", "traveling with spouse", "family trip", "travel:"]):
                     print(f"  -> Categorized as PASSENGER")
-                    summary["passenger"].append(entry)
-                elif any(word in memory_lower for word in ["seat", "window", "aisle", "middle", "exit row"]):
+                    if display_lower not in seen_by_category["passenger"]:
+                        seen_by_category["passenger"].add(display_lower)
+                        summary["passenger"].append(entry)
+                elif any(word in display_lower for word in ["seat", "window", "aisle", "middle", "exit row", "seat:"]):
                     print(f"  -> Categorized as SEAT")
-                    summary["seat"].append(entry)
-                elif any(word in memory_lower for word in ["airline", "carrier", "united", "delta", "american", "southwest", "jetblue"]):
+                    if display_lower not in seen_by_category["seat"]:
+                        seen_by_category["seat"].add(display_lower)
+                        summary["seat"].append(entry)
+                elif any(word in display_lower for word in ["airline", "carrier", "united", "delta", "american", "southwest", "jetblue", "alaska", "spirit", "frontier"]):
                     print(f"  -> Categorized as AIRLINE")
-                    summary["airline"].append(entry)
-                elif any(word in memory_lower for word in ["baggage", "luggage", "bag", "carry-on", "checked"]):
+                    if display_lower not in seen_by_category["airline"]:
+                        seen_by_category["airline"].add(display_lower)
+                        summary["airline"].append(entry)
+                elif any(word in display_lower for word in ["baggage", "luggage", "bag", "carry-on", "checked", "baggage:"]):
                     print(f"  -> Categorized as BAGGAGE")
-                    summary["baggage"].append(entry)
-                elif any(word in memory_lower for word in ["budget", "price", "cost"]) and "general" not in memory_lower and "budget-conscious" not in memory_lower:
+                    if display_lower not in seen_by_category["baggage"]:
+                        seen_by_category["baggage"].add(display_lower)
+                        summary["baggage"].append(entry)
+                elif any(word in display_lower for word in ["budget", "price", "cost"]) and "general" not in display_lower and "budget-conscious" not in display_lower:
                     # Only add specific budget preferences (e.g., "max $500"), skip generic "budget-conscious"
                     print(f"  -> Categorized as BUDGET")
-                    summary["budget"].append(entry)
+                    if display_lower not in seen_by_category["budget"]:
+                        seen_by_category["budget"].add(display_lower)
+                        summary["budget"].append(entry)
                 elif any(word in memory_lower for word in ["live", "based", "from", "home"]) and any(word in memory_lower for word in ["houston", "newyork", "los angeles", "london", "paris", "tokyo", "delhi", "mumbai", "kathmandu", "beijing", "chicago", "miami", "seattle", "boston", "denver", "dallas", "austin", "sanfrancisco"]):
                     print(f"  -> Categorized as LOCATION")
-                    summary["location"].append(entry)
+                    if display_lower not in seen_by_category["location"]:
+                        seen_by_category["location"].add(display_lower)
+                        summary["location"].append(entry)
                 else:
                     print(f"  -> Categorized as OTHER")
-                    summary["other"].append(entry)
+                    if display_lower not in seen_by_category["other"]:
+                        seen_by_category["other"].add(display_lower)
+                        summary["other"].append(entry)
             
             print(f"[MEMORY] Final summary: {summary}")
             # Remove empty categories

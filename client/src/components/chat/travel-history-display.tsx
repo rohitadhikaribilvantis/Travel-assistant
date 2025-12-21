@@ -70,6 +70,16 @@ function cleanAirlineName(value: string | undefined): string {
   return v.replace(/\s+(round\s*-?\s*trip|one\s*-?\s*way)\s*$/i, "").trim();
 }
 
+function formatDateYMD(value: string): string {
+  // IMPORTANT: Date('YYYY-MM-DD') is parsed as UTC midnight and can shift date in some timezones.
+  // Use UTC noon to keep the intended calendar date stable.
+  const v = value.trim();
+  const [y, m, d] = v.split("-").map((x) => Number.parseInt(x, 10));
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return value;
+  const safe = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  return safe.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
 function getAirlineName(code: string): string {
   return AIRLINE_NAMES[code] || code;
 }
@@ -379,12 +389,12 @@ export function TravelHistoryDisplay({ bookings, compact = false }: TravelHistor
                       <div className="min-w-0">
                         <p className={compact ? "text-[11px] text-slate-500 dark:text-slate-400 font-medium" : "text-xs text-slate-500 dark:text-slate-400 font-medium"}>{displayTripType}</p>
                         <p className={compact ? "text-[11px] font-semibold text-slate-900 dark:text-white truncate" : "text-xs font-semibold text-slate-900 dark:text-white truncate"}>
-                          Depart: {parsed.departure_date ? new Date(parsed.departure_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ""}
+                          Depart: {parsed.departure_date ? formatDateYMD(parsed.departure_date) : ""}
                           {parsed.departure_time ? ` • ${parsed.departure_time}` : ""}
                         </p>
                         {(parsed.return_date || parsed.return_departure_time) && (
                           <p className={compact ? "text-[11px] font-semibold text-slate-900 dark:text-white truncate" : "text-xs font-semibold text-slate-900 dark:text-white truncate"}>
-                            Return: {parsed.return_date ? new Date(parsed.return_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ""}
+                            Return: {parsed.return_date ? formatDateYMD(parsed.return_date) : ""}
                             {parsed.return_departure_time ? ` • ${parsed.return_departure_time}` : ""}
                           </p>
                         )}

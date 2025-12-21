@@ -49,6 +49,8 @@ export function ChatInput({ onSendMessage, isLoading, disabled, messages, curren
   const [message, setMessage] = useState("");
   const [displayedSuggestions, setDisplayedSuggestions] = useState<string[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
+  const [draftMessage, setDraftMessage] = useState<string>("");
 
   // Initialize suggestions on mount
   useEffect(() => {
@@ -75,6 +77,8 @@ export function ChatInput({ onSendMessage, isLoading, disabled, messages, curren
     if (message.trim() && !isLoading && !disabled) {
       onSendMessage(message.trim(), currentPreferences);
       setMessage("");
+      setHistoryIndex(-1);
+      setDraftMessage("");
       if (textareaRef.current) {
         textareaRef.current.style.height = "auto";
       }
@@ -82,6 +86,68 @@ export function ChatInput({ onSendMessage, isLoading, disabled, messages, curren
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    const inputHistory = (messages || [])
+      .filter((m) => m?.role === "user" && typeof m.content === "string")
+      .map((m) => m.content)
+      .filter((c) => c.trim().length > 0);
+
+    // Prompt history navigation (shell-like):
+    // - ArrowUp when caret is on the FIRST line
+    // - ArrowDown when caret is on the LAST line (and we're already in history mode)
+    // This avoids the "first press moves caret, second press scrolls history" behavior.
+    if (!disabled && textareaRef.current && inputHistory.length > 0) {
+      const el = textareaRef.current;
+      const selectionCollapsed = el.selectionStart === el.selectionEnd;
+      const beforeCaret = message.slice(0, el.selectionStart);
+      const afterCaret = message.slice(el.selectionEnd);
+      const caretOnFirstLine = selectionCollapsed && !beforeCaret.includes("\n");
+      const caretOnLastLine = selectionCollapsed && !afterCaret.includes("\n");
+
+      if (e.key === "ArrowUp" && caretOnFirstLine) {
+        e.preventDefault();
+        // First time entering history mode: preserve whatever the user typed.
+        if (historyIndex === -1) {
+          setDraftMessage(message);
+          setHistoryIndex(inputHistory.length - 1);
+          setMessage(inputHistory[inputHistory.length - 1]);
+        } else {
+          const nextIndex = Math.max(0, historyIndex - 1);
+          setHistoryIndex(nextIndex);
+          setMessage(inputHistory[nextIndex]);
+        }
+        // Move caret to end after setting message.
+        requestAnimationFrame(() => {
+          if (textareaRef.current) {
+            const len = textareaRef.current.value.length;
+            textareaRef.current.selectionStart = len;
+            textareaRef.current.selectionEnd = len;
+          }
+        });
+        return;
+      }
+
+      if (e.key === "ArrowDown" && historyIndex !== -1 && caretOnLastLine) {
+        e.preventDefault();
+        const nextIndex = historyIndex + 1;
+        if (nextIndex >= inputHistory.length) {
+          // Exit history mode back to draft.
+          setHistoryIndex(-1);
+          setMessage(draftMessage);
+        } else {
+          setHistoryIndex(nextIndex);
+          setMessage(inputHistory[nextIndex]);
+        }
+        requestAnimationFrame(() => {
+          if (textareaRef.current) {
+            const len = textareaRef.current.value.length;
+            textareaRef.current.selectionStart = len;
+            textareaRef.current.selectionEnd = len;
+          }
+        });
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit(e);

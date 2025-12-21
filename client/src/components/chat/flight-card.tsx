@@ -4,6 +4,18 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { FlightOffer } from "@shared/schema";
 import { useAuth } from "@/hooks/use-auth";
+import { useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 interface FlightCardProps {
   flight: FlightOffer;
@@ -23,17 +35,35 @@ function formatDuration(duration: string): string {
 }
 
 function formatTime(dateTimeString: string): string {
-  const date = new Date(dateTimeString);
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  // IMPORTANT: Avoid JS Date() timezone conversion (it can shift dates/times).
+  // Amadeus `at` strings already contain local date/time context.
+  const timePart = dateTimeString.split("T")[1] || "";
+  const hhmm = timePart.slice(0, 5); // HH:MM
+  const [hhRaw, mmRaw] = hhmm.split(":");
+  const hours24 = Number.parseInt(hhRaw || "", 10);
+  const minutes = Number.parseInt(mmRaw || "", 10);
+  if (!Number.isFinite(hours24) || !Number.isFinite(minutes)) return hhmm || dateTimeString;
+
+  const ampm = hours24 >= 12 ? "PM" : "AM";
+  const hours12 = ((hours24 + 11) % 12) + 1;
+  const mm = String(minutes).padStart(2, "0");
+  return `${String(hours12).padStart(2, "0")}:${mm} ${ampm}`;
 }
 
 function formatDate(dateTimeString: string): string {
-  const date = new Date(dateTimeString);
-  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  // IMPORTANT: Avoid JS Date() timezone conversion.
+  const datePart = dateTimeString.split("T")[0];
+  const [y, m, d] = datePart.split("-").map((x) => Number.parseInt(x, 10));
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return datePart || dateTimeString;
+
+  // Use UTC noon to avoid date shifting in local timezones.
+  const safe = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  return safe.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 export function FlightCard({ flight, index, passengers, onBooking }: FlightCardProps) {
   const { token } = useAuth();
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const outbound = flight.itineraries[0];
   const returnFlight = flight.itineraries[1];
   const firstSegment = outbound.segments[0];
@@ -277,14 +307,43 @@ export function FlightCard({ flight, index, passengers, onBooking }: FlightCardP
                 </Badge>
               )}
               <div className="mt-2 flex w-full flex-col gap-2 md:w-auto">
-                <Button
-                  size="sm"
-                  onClick={handleBookClick}
-                  className="flex items-center gap-1"
-                >
-                  Book with {getAirlineDisplay().name}
-                  <ExternalLink className="h-3 w-3" />
-                </Button>
+                <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+                  <AlertDialogTrigger asChild>
+                    <Button size="sm" className="flex items-center gap-1">
+                      Book with {getAirlineDisplay().name}
+                      <ExternalLink className="h-3 w-3" />
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Confirm booking</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This will save the booking to your travel history and open the booking page.
+                        <br />
+                        <br />
+                        {firstSegment.departure.iataCode} → {lastSegment.arrival.iataCode}
+                        {returnFlight ? " (Round Trip)" : " (One Way)"}
+                        <br />
+                        Depart: {formatDate(firstSegment.departure.at)}
+                        {returnFlight ? ` • Return: ${formatDate(returnFlight.segments[0].departure.at)}` : ""}
+                        <br />
+                        Price: {flight.price.currency} {parseFloat(flight.price.total).toFixed(0)} per person
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={async (e) => {
+                          e.preventDefault();
+                          setConfirmOpen(false);
+                          await handleBookClick();
+                        }}
+                      >
+                        Confirm
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
             </div>
           </div>

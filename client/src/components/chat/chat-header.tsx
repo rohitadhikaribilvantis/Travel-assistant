@@ -305,7 +305,9 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
   };
 
   const handleRemovePreference = (preference: any) => {
-    const prefText = typeof preference === "string" ? preference : preference.text || preference.memory;
+    // Prefer deleting by the raw memory text (pref.memory) so canonical display text
+    // doesn't break deletion matching.
+    const prefText = typeof preference === "string" ? preference : preference.memory || preference.text;
     removePreference(prefText);
   };
 

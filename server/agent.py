@@ -13,6 +13,7 @@ db_storage = DatabaseStorage()
 
 
 _iata_display_cache: dict[str, str] = {}
+_iata_country_cache: dict[str, str] = {}
 
 
 def _iata_display(code: str) -> str:
@@ -31,6 +32,101 @@ def _iata_display(code: str) -> str:
     if isinstance(resolved, str) and resolved.strip() and resolved.strip().upper() != c:
         _iata_display_cache[c] = resolved
     return resolved
+
+
+def _iata_country(code: str) -> str | None:
+    if not isinstance(code, str):
+        return None
+    c = code.strip().upper()
+    if len(c) != 3:
+        return None
+
+    cached = _iata_country_cache.get(c)
+    if cached:
+        return cached
+
+    country = amadeus_client.resolve_airport_country(c)
+    if isinstance(country, str) and country.strip():
+        _iata_country_cache[c] = country.strip()
+        return _iata_country_cache[c]
+    return None
+
+
+def _compute_most_travelled_countries(user_id: str, limit: int = 3) -> list[dict]:
+    """Compute most traveled destination countries from travel history.
+
+    Prefers DB bookings; falls back to parsing mem0 travel history.
+    """
+
+    def norm_iata(value: str | None) -> str | None:
+        if not isinstance(value, str):
+            return None
+        v = value.strip().upper()
+        return v if len(v) == 3 else None
+
+    counter: Counter[str] = Counter()
+
+    # 1) DB bookings (deterministic)
+    try:
+        bookings = db_storage.list_bookings(user_id)
+        for b in bookings:
+            dest = norm_iata(b.get("destination"))
+            if dest:
+                country = _iata_country(dest)
+                if country:
+                    counter[country] += 1
+    except Exception as e:
+        print(f"[AGENT] Failed to load bookings for countries: {e}")
+
+    # 2) Fallback: mem0 travel history
+    if not counter:
+        try:
+            memories = memory_manager.get_travel_history(user_id) or []
+
+            def add_destination_iata(dest_code: str | None):
+                d = norm_iata(dest_code)
+                if not d:
+                    return
+                country = _iata_country(d)
+                if country:
+                    counter[country] += 1
+
+            for m in memories:
+                if not m:
+                    continue
+
+                memory_text = ""
+                if isinstance(m, dict):
+                    meta = m.get("metadata") or {}
+                    add_destination_iata(meta.get("destination"))
+                    memory_text = (m.get("memory") or "").strip()
+                else:
+                    memory_text = str(m).strip()
+
+                if not memory_text:
+                    continue
+
+                # Pattern: "IAH → KTM" or "IAH->KTM" (destination is second code)
+                arrow = re.findall(r"\b([A-Z]{3})\b\s*(?:→|->)\s*\b([A-Z]{3})\b", memory_text)
+                for _o, d in arrow:
+                    add_destination_iata(d)
+
+                # Pattern: "from IAH to KTM"
+                from_to = re.findall(r"from\s+([A-Z]{3})\s+to\s+([A-Z]{3})", memory_text, flags=re.IGNORECASE)
+                for _o, d in from_to:
+                    add_destination_iata(d)
+
+        except Exception as e:
+            print(f"[AGENT] Failed to compute countries from memories: {e}")
+
+    if not counter:
+        return []
+
+    ranked = sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))
+    out: list[dict] = []
+    for country, count in ranked[: max(1, limit)]:
+        out.append({"country": country, "count": count})
+    return out
 
 
 def _compute_frequent_routes(user_id: str, limit: int = 5) -> list[dict]:
@@ -868,6 +964,40 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
     
     # Special handling for preference queries
     message_lower = user_message.lower()
+
+    # Special handling for most traveled country queries
+    if any(
+        phrase in message_lower
+        for phrase in [
+            "most travelled country",
+            "most traveled country",
+            "most travelled countries",
+            "most traveled countries",
+            "most visited country",
+            "where do i travel most",
+            "what is my most traveled country",
+            "what is my most travelled country",
+        ]
+    ):
+        countries = _compute_most_travelled_countries(user_id, limit=3)
+        if not countries:
+            return {
+                "content": "I don't have any booking history yet, so I can't determine your most frequent destination country. Book a flight and then ask again.",
+                "flight_results": None,
+            }
+
+        top = countries[0]
+        lines = [
+            f"Based on your booking history (planned trips), your most frequent destination country is {top['country']} ({top['count']} trip(s))."
+        ]
+
+        if len(countries) > 1:
+            lines.append("")
+            lines.append("Top destination countries:")
+            for item in countries[:3]:
+                lines.append(f"- {item['country']}: {item['count']} trip(s)")
+
+        return {"content": "\n".join(lines), "flight_results": None}
 
     # Special handling for frequent routes queries (based on travel history)
     if any(
