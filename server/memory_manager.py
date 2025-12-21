@@ -328,7 +328,7 @@ class TravelMemoryManager:
             "window seat", "aisle seat", "middle seat", "exit row",
             "morning", "evening", "afternoon", "red-eye", "airline",
             "layover", "non-stop", "direct", "baggage", "solo", "family",
-            "partner", "budget", "luxury"
+            "partner", "budget"
         ]
         
         should_store = any(kw in user_message.lower() for kw in preference_keywords)
@@ -492,12 +492,13 @@ class TravelMemoryManager:
                 return "Stops: Layovers OK"
 
         # Departure time
+        negative = any(kw in lower for kw in ["hate", "avoid", "don't like", "dont like", "do not like", "no ", "never"])
         if "morning" in lower:
-            return "Departure time: Morning"
+            return "Departure time: Avoid morning" if negative else "Departure time: Morning"
         if "afternoon" in lower:
-            return "Departure time: Afternoon"
+            return "Departure time: Avoid afternoon" if negative else "Departure time: Afternoon"
         if "evening" in lower:
-            return "Departure time: Evening"
+            return "Departure time: Avoid evening" if negative else "Departure time: Evening"
 
         # Red-eye
         if "red-eye" in lower or "red eye" in lower:
@@ -712,10 +713,6 @@ class TravelMemoryManager:
 
                 for r in db_rows:
                     pref_type = (r.get("type") or "other").strip() if isinstance(r.get("type"), str) else (r.get("type") or "other")
-                    if pref_type not in summary:
-                        summary[pref_type] = []
-                    if pref_type not in seen_by_category:
-                        seen_by_category[pref_type] = set()
 
                     raw = (r.get("raw") or "").strip()
                     canonical = (r.get("canonical") or "").strip()
@@ -723,6 +720,16 @@ class TravelMemoryManager:
                     display_lower = (display_text or "").strip().lower()
                     if not display_lower:
                         continue
+
+                    # Remap untyped/"other" passenger-like DB prefs into passenger bucket to avoid duplicates.
+                    if pref_type in {"other", "general", ""}:
+                        if any(k in display_lower for k in ["travel: solo", "traveling alone", "travelling alone", "solo", "with family", "travel: with family", "with partner", "travel: with partner"]):
+                            pref_type = "passenger"
+
+                    if pref_type not in summary:
+                        summary[pref_type] = []
+                    if pref_type not in seen_by_category:
+                        seen_by_category[pref_type] = set()
 
                     if display_lower in seen_by_category[pref_type]:
                         continue
@@ -736,7 +743,7 @@ class TravelMemoryManager:
                     seen_by_category[pref_type].add(display_lower)
 
                 # Mutually exclusive types: overwrite with DB latest only.
-                for t in ["cabin_class", "departure_time", "trip_type"]:
+                for t in ["cabin_class", "departure_time", "trip_type", "passenger"]:
                     row = latest_db_by_type.get(t)
                     if not row:
                         continue
@@ -751,6 +758,24 @@ class TravelMemoryManager:
                         summary[t] = [display_text]
             except Exception as e:
                 print(f"[MEMORY] Warning: failed to merge DB preferences: {e}")
+
+            # De-confuse redundant "travel style" entries.
+            # Keep Active Preferences focused on actionable flight-search constraints.
+            def _entry_text(v: object) -> str:
+                if isinstance(v, dict):
+                    return str(v.get("text") or v.get("memory") or "")
+                return str(v or "")
+
+            # Always hide generic "luxury" preferences (they're ambiguous + not actionable).
+            for key in ["other", "budget"]:
+                items = summary.get(key) or []
+                filtered_items = []
+                for item in items:
+                    txt = _entry_text(item).lower()
+                    if "luxury" in txt:
+                        continue
+                    filtered_items.append(item)
+                summary[key] = filtered_items
 
             # Remove empty categories
             return {k: v for k, v in summary.items() if v}

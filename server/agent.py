@@ -442,10 +442,10 @@ def _infer_preference_memory_type(preference_text: str) -> str | None:
         return "baggage"
     if "airline" in t or "carrier" in t:
         return "airline"
+    if any(k in t for k in ["traveling alone", "travelling alone", "solo", "with family", "kids", "children", "with partner", "spouse"]):
+        return "passenger"
     if "one-way" in t or "one way" in t or "round trip" in t or "round-trip" in t:
-        # Backend summary uses key trip_type; memory_manager types don't currently include it.
-        # Leave untyped so canonicalization + categorization still works.
-        return None
+        return "trip_type"
 
     return None
 
@@ -478,10 +478,23 @@ def extract_preferences_from_message(user_message: str) -> list[str]:
     
     # Time preferences
     time_patterns = [
-        (r"(?:early\s+)?morning\s+flights?", "early morning flights"),
-        (r"late\s+evening\s+flights?", "late evening flights"),
+        # Avoidance should win over generic time mentions
+        (r"(?:hate|avoid|don\s*'?t\s+like|do\s+not\s+like)\s+(?:flying\s+)?(?:in\s+the\s+)?mornings?\b", "Avoid morning flights"),
+        (r"(?:hate|avoid|don\s*'?t\s+like|do\s+not\s+like)\s+(?:flying\s+)?(?:in\s+the\s+)?afternoons?\b", "Avoid afternoon flights"),
+        (r"(?:hate|avoid|don\s*'?t\s+like|do\s+not\s+like)\s+(?:flying\s+)?(?:in\s+the\s+)?evenings?\b", "Avoid evening flights"),
+        (r"(?:hate|avoid|don\s*'?t\s+like|do\s+not\s+like)\s+(?:early\s+)?morning\s+flights?", "Avoid morning flights"),
+        (r"(?:hate|avoid|don\s*'?t\s+like|do\s+not\s+like)\s+afternoon\s+flights?", "Avoid afternoon flights"),
+        (r"(?:hate|avoid|don\s*'?t\s+like|do\s+not\s+like)\s+(?:late\s+)?evening\s+flights?", "Avoid evening flights"),
+
+        # Positive preferences (capture common phrasing)
+        (r"(?:i\s+)?(?:prefer|like|love|want)\s+(?:to\s+)?(?:fly|flying)\s+(?:in\s+the\s+)?mornings?\b", "morning flights"),
+        (r"(?:i\s+)?(?:prefer|like|love|want)\s+(?:to\s+)?(?:fly|flying)\s+(?:in\s+the\s+)?afternoons?\b", "afternoon flights"),
+        (r"(?:i\s+)?(?:prefer|like|love|want)\s+(?:to\s+)?(?:fly|flying)\s+(?:in\s+the\s+)?evenings?\b", "evening flights"),
+        (r"(?:early\s+)?morning\s+flights?", "morning flights"),
+        (r"late\s+evening\s+flights?", "evening flights"),
         (r"afternoon\s+flights?", "afternoon flights"),
         (r"(?:prefer|want)\s+(?:early|late|morning|afternoon|evening)\s+departures?", "preferred departure time"),
+        (r"\b(?:in\s+the\s+)?mornings?\b", "morning flights"),
     ]
     
     # Flight type preferences
@@ -507,9 +520,13 @@ def extract_preferences_from_message(user_message: str) -> list[str]:
     ]
     
     # Budget preferences
+    # IMPORTANT: Don't store "cheap" as a long-lived preference.
+    # Treat budget as a preference only when the user expresses it as a stable constraint.
     budget_patterns = [
-        (r"(?:budget|cheap|low\s+cost)", "budget conscious"),
-        (r"(?:luxury|premium|first\s+class|business\s+class)", "luxury travel"),
+        (
+            r"\b(on\s+a\s+budget|tight\s+budget|budget[-\s]?friendly|budget[-\s]?conscious|as\s+cheap\s+as\s+possible|cheapest\s+possible)\b",
+            "budget conscious",
+        ),
     ]
 
     # Red-eye preferences
@@ -521,7 +538,7 @@ def extract_preferences_from_message(user_message: str) -> list[str]:
     
     # Location/home preferences
     location_patterns = [
-        (r"(?:i\s+)?(?:live|based|from)\s+(?:in\s+)?(\w+)", "home city prefere, location_patternsnce"),
+        (r"(?:i\s+)?(?:live|based|from)\s+(?:in\s+)?(\w+)", "home city preference"),
     ]
     
     all_patterns = [
@@ -542,6 +559,35 @@ def extract_preferences_from_message(user_message: str) -> list[str]:
         if pref not in seen:
             seen.add(pref)
             unique_prefs.append(pref)
+
+    # Resolve contradictions: if the user expresses avoidance for a time bucket,
+    # don't also store the positive version (which can overwrite the avoid entry
+    # for mutually-exclusive DB types).
+    avoid_buckets: set[str] = set()
+    for pref in unique_prefs:
+        pl = pref.lower()
+        if pl.startswith("avoid "):
+            for b in ("morning", "afternoon", "evening"):
+                if b in pl:
+                    avoid_buckets.add(b)
+
+    if avoid_buckets:
+        filtered: list[str] = []
+        for pref in unique_prefs:
+            pl = pref.lower()
+            # Drop positive time labels that conflict with avoidance.
+            if pl in {"morning flights", "afternoon flights", "evening flights"}:
+                for b in avoid_buckets:
+                    if b in pl:
+                        break
+                else:
+                    filtered.append(pref)
+                continue
+            # Also drop the generic time label if it's for an avoided bucket.
+            if pl == "preferred departure time" and any(b in (user_message or "").lower() for b in avoid_buckets):
+                continue
+            filtered.append(pref)
+        unique_prefs = filtered
     
     return unique_prefs
 
@@ -887,7 +933,17 @@ def get_preference_overrides(user_id: str, current_preferences: Optional[dict] =
             if time_text:
                 overrides["time_preference"] = time_text
                 user_preferences["departure_time_preferences"] = [time_text]
-                if "morning" in time_text:
+                # Avoidance semantics (e.g. "avoid afternoon")
+                if "avoid" in time_text or "hate" in time_text or "don't like" in time_text or "do not like" in time_text:
+                    if "morning" in time_text:
+                        applied_prefs.append("avoid morning flights")
+                    elif "afternoon" in time_text:
+                        applied_prefs.append("avoid afternoon flights")
+                    elif "evening" in time_text:
+                        applied_prefs.append("avoid evening flights")
+                    else:
+                        applied_prefs.append(f"avoid time preference: {time_text}")
+                elif "morning" in time_text:
                     applied_prefs.append("morning flights")
                 elif "afternoon" in time_text:
                     applied_prefs.append("afternoon flights")
@@ -1076,6 +1132,39 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
     
     # Special handling for preference queries
     message_lower = user_message.lower()
+
+    def _looks_like_explicit_flight_search(text: str) -> bool:
+        t = (text or "").lower()
+        if not t.strip():
+            return False
+
+        # Strong intent verbs.
+        if re.search(r"\b(find|search|show|book|get|look\s*up|pull\s*up)\b", t):
+            return True
+
+        # Route pattern.
+        if re.search(r"\bfrom\b.+\bto\b", t):
+            return True
+
+        return False
+
+    # Preference-only update guard:
+    # Users often message things like "I hate afternoon flights" intending only to update preferences.
+    # Do NOT automatically re-run the last route/search unless they explicitly asked to search.
+    extracted_prefs_only = extract_preferences_from_message(user_message)
+    if extracted_prefs_only and not _looks_like_explicit_flight_search(user_message):
+        # Keep response concise; don't trigger any flight tools.
+        # (The API layer persists extracted_preferences to DB/mem0.)
+        confirmations = []
+        for p in extracted_prefs_only:
+            if isinstance(p, str) and p.strip():
+                confirmations.append(p.strip())
+        confirmation_text = ", ".join(confirmations[:3]) if confirmations else "your preferences"
+        return {
+            "content": f"Got it — I’ll remember: {confirmation_text}.",
+            "extracted_preferences": extracted_prefs_only,
+            "flight_results": [],
+        }
 
     # Special handling for most traveled country queries
     if any(
@@ -1306,8 +1395,9 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
     
     system_prompt = get_system_prompt_with_memory(user_id)
     
-    # Extract last flight search context if user is expressing new preferences
-    extracted_prefs = extract_preferences_from_message(user_message)
+    # Extract last flight search context if user is expressing new preferences.
+    # Provide this as optional context only; do NOT force an automatic re-search.
+    extracted_prefs = extracted_prefs_only
     if extracted_prefs and conversation_history:
         # Look for previous flight search in conversation history
         last_search_context = None
@@ -1322,7 +1412,7 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
         if last_search_context:
             system_prompt += "\n\nRECENT SEARCH CONTEXT:\n"
             system_prompt += f"The user recently searched for: {last_search_context}\n"
-            system_prompt += "Since they've expressed a NEW PREFERENCE, you MUST re-search using the same route/dates but with their updated preference."
+            system_prompt += "If the user asks to re-run the search, reuse the same route/dates and apply the new preference."
     
     messages = [{"role": "system", "content": system_prompt}]
     

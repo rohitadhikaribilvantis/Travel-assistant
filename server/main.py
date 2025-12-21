@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
@@ -21,7 +22,13 @@ from database import DatabaseStorage
 JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRES_HOURS = 7 * 24  # 7 days
-PYTHON_BACKEND_PORT = int(os.getenv("PYTHON_BACKEND_PORT", 8000))
+
+# Prefer the conventional PORT (used by many hosts), fallback to legacy PYTHON_BACKEND_PORT.
+_port_raw = os.getenv("PORT") or os.getenv("PYTHON_BACKEND_PORT") or "8000"
+try:
+    PYTHON_BACKEND_PORT = int(_port_raw)
+except Exception:
+    PYTHON_BACKEND_PORT = 8000
 
 # Initialize database storage
 storage = DatabaseStorage()
@@ -379,6 +386,31 @@ async def chat(request: ChatRequest, current_user: dict = Depends(get_current_us
 
         # Extract preferences from the conversation
         extracted_preferences = result.get("extracted_preferences", [])
+
+        # Avoid persisting ephemeral request phrasing as long-lived preferences.
+        # Example: "cheap flights" should influence the current search, but shouldn't
+        # permanently store a "budget conscious" preference unless the user expresses
+        # it as a stable constraint.
+        msg_lower = (request.message or "").lower()
+        filtered_extracted: list[str] = []
+        for pref in extracted_preferences or []:
+            if not isinstance(pref, str) or not pref.strip():
+                continue
+
+            pref_lower = pref.strip().lower()
+            if pref_lower == "budget conscious":
+                stable_budget = bool(
+                    re.search(
+                        r"\b(on\s+a\s+budget|tight\s+budget|budget[-\s]?friendly|budget[-\s]?conscious|as\s+cheap\s+as\s+possible|cheapest\s+possible)\b",
+                        msg_lower,
+                    )
+                )
+                if not stable_budget:
+                    continue
+
+            filtered_extracted.append(pref)
+
+        extracted_preferences = filtered_extracted
         
         # Store extracted preferences in mem0 if any were found
         from memory_manager import memory_manager
@@ -544,8 +576,28 @@ async def delete_all_conversations(request_body: DeleteAllConversationsRequest, 
         if delete_preferences:
             try:
                 print(f"[DELETE ALL] Clearing all preferences for user {user_id}")
+                # 1) Clear DB-backed preferences (Active Preferences source of truth)
+                db_rows = storage.list_preferences(user_id) or []
+                db_deleted = 0
+                for r in db_rows:
+                    # Delete by both raw and canonical forms (if present)
+                    raw = (r.get("raw") or "").strip()
+                    canonical = (r.get("canonical") or "").strip()
+                    for txt in [raw, canonical]:
+                        if not txt:
+                            continue
+                        try:
+                            res = storage.delete_preference(user_id, txt)
+                            if isinstance(res, dict) and res.get("success"):
+                                db_deleted += int(res.get("deleted") or 0)
+                        except Exception as e:
+                            print(f"[DELETE ALL] Warning: failed to delete DB pref '{txt}': {e}")
+
+                print(f"[DELETE ALL] Deleted {db_deleted} DB preference row(s)")
+
+                # 2) Best-effort clear mem0 preferences (fallback memory layer)
                 result = memory_manager.clear_all_preferences(user_id)
-                print(f"[DELETE ALL] Clear preferences result: {result}")
+                print(f"[DELETE ALL] Clear mem0 preferences result: {result}")
             except Exception as e:
                 print(f"[CLEANUP ERROR] Error deleting preferences for user {user_id}: {e}")
                 import traceback
@@ -614,7 +666,7 @@ async def get_user_preferences(current_user: dict = Depends(get_current_user)):
 
         # Mutually exclusive preference types: DB latest wins (single item)
         try:
-            for t in ["cabin_class", "departure_time", "trip_type"]:
+            for t in ["cabin_class", "departure_time", "trip_type", "passenger"]:
                 row = None
                 try:
                     row = latest_db_by_type.get(t)  # type: ignore[name-defined]
@@ -634,6 +686,95 @@ async def get_user_preferences(current_user: dict = Depends(get_current_user)):
         # Filter out "general" type preferences (they shouldn't exist with new code, but clean up old ones)
         if "general" in preferences:
             preferences.pop("general", None)
+
+        # Keep Active Preferences actionable and non-redundant.
+        # - Hide & cleanup generic "luxury" travel-style entries.
+        # - Avoid duplicate passenger prefs by moving them out of "other".
+        def _pref_text(x) -> str:
+            if isinstance(x, str):
+                return x
+            if isinstance(x, dict):
+                return (x.get("text") or x.get("memory") or "")
+            return str(x)
+
+        passenger_markers = [
+            "travel: solo",
+            "traveling alone",
+            "travelling alone",
+            "solo",
+            "with family",
+            "travel: with family",
+            "with partner",
+            "travel: with partner",
+        ]
+
+        # First, drop luxury anywhere it appears.
+        # Also proactively delete from DB so it won't come back.
+        luxury_candidates: list[str] = []
+        try:
+            for r in (db_rows or []):
+                raw = (r.get("raw") or "")
+                canonical = (r.get("canonical") or "")
+                if "luxury" in raw.lower():
+                    luxury_candidates.append(raw)
+                if canonical and "luxury" in canonical.lower():
+                    luxury_candidates.append(canonical)
+        except Exception:
+            luxury_candidates = []
+
+        if luxury_candidates:
+            # Deduplicate while preserving order
+            seen_lux = set()
+            unique_lux = []
+            for t in luxury_candidates:
+                tl = (t or "").strip().lower()
+                if not tl or tl in seen_lux:
+                    continue
+                seen_lux.add(tl)
+                unique_lux.append(t)
+
+            print(f"[PREFS CLEANUP] Removing {len(unique_lux)} luxury preference(s) from DB/mem0")
+            for txt in unique_lux:
+                try:
+                    storage.delete_preference(user_id, txt)
+                except Exception as e:
+                    print(f"[PREFS CLEANUP] DB delete failed for '{txt}': {e}")
+                try:
+                    memory_manager.remove_preference(user_id, txt)
+                except Exception:
+                    pass
+
+        for k in list(preferences.keys()):
+            items = preferences.get(k) or []
+            filtered = []
+            for item in items:
+                t = _pref_text(item).strip().lower()
+                if "luxury" in t:
+                    continue
+                filtered.append(item)
+            preferences[k] = filtered
+            if not preferences[k]:
+                preferences.pop(k, None)
+
+        # Then, move passenger-like entries out of "other".
+        other_items = preferences.get("other") or []
+        if other_items:
+            passenger_bucket = preferences.get("passenger") or []
+            passenger_texts = {_pref_text(x).strip().lower() for x in passenger_bucket}
+            kept_other = []
+            for item in other_items:
+                t = _pref_text(item).strip().lower()
+                if any(m in t for m in passenger_markers):
+                    if t and t not in passenger_texts:
+                        passenger_bucket.append(item)
+                        passenger_texts.add(t)
+                    continue
+                kept_other.append(item)
+            if passenger_bucket:
+                preferences["passenger"] = passenger_bucket
+            preferences["other"] = kept_other
+            if not preferences["other"]:
+                preferences.pop("other", None)
         
         return {
             "userId": current_user["id"],

@@ -464,17 +464,38 @@ class AmadeusClient:
             
             # Extract hour from ISO datetime
             hour = int(departure_time_str.split("T")[1].split(":")[0])
-            
+
+            def in_bucket(bucket: str) -> bool:
+                if bucket == "morning":
+                    return 5 <= hour < 12
+                if bucket == "afternoon":
+                    return 12 <= hour < 17
+                if bucket == "evening":
+                    return 17 <= hour < 23
+                return False
+
+            allowed: set[str] = set()
+            avoided: set[str] = set()
+
             for pref in time_preferences:
-                pref_lower = pref.lower()
-                if "morning" in pref_lower and 5 <= hour < 12:
-                    return True
-                if "afternoon" in pref_lower and 12 <= hour < 17:
-                    return True
-                if "evening" in pref_lower and 17 <= hour < 23:
-                    return True
-            
-            return False
+                pref_lower = str(pref).lower()
+                is_avoid = any(k in pref_lower for k in ["avoid", "hate", "don't like", "dont like", "do not like"])
+
+                for bucket in ("morning", "afternoon", "evening"):
+                    if bucket in pref_lower:
+                        if is_avoid:
+                            avoided.add(bucket)
+                        else:
+                            allowed.add(bucket)
+
+            # If user only specified avoid-times, allow anything not in avoided.
+            if not allowed:
+                return not any(in_bucket(b) for b in avoided)
+
+            # Otherwise require match of allowed and not match avoided.
+            if any(in_bucket(b) for b in avoided):
+                return False
+            return any(in_bucket(b) for b in allowed)
         except:
             return True
     

@@ -491,7 +491,8 @@ class DatabaseStorage:
                 return {"error": "Preference text is required"}
 
             # Some preference types are mutually exclusive; keep only the most recent one.
-            if type_clean in {"cabin_class", "departure_time", "trip_type"}:
+            # Passenger is mutually exclusive (solo vs family vs partner).
+            if type_clean in {"cabin_class", "departure_time", "trip_type", "passenger"}:
                 (
                     db.query(PreferenceModel)
                     .filter(PreferenceModel.userId == user_id)
