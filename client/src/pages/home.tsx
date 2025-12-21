@@ -345,7 +345,12 @@ export default function Home() {
           onPreferencesChange={setCurrentPreferences}
           onRefreshBookings={handleRefreshBookings}
         />
-        <ChatContainer messages={messages} isLoading={isLoading} onBooking={refreshBookingsFn || undefined} />
+        <ChatContainer
+          messages={messages}
+          isLoading={isLoading}
+          isLoadingConversation={isLoadingConversation}
+          onBooking={refreshBookingsFn || undefined}
+        />
         <ChatInput onSendMessage={sendMessage} isLoading={isLoading} messages={messages} currentPreferences={currentPreferences} />
       </div>
     </div>

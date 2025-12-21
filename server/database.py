@@ -134,6 +134,18 @@ class BookingModel(Base):
     bookedAt = Column(String, nullable=True)
     createdAt = Column(String)
 
+
+class PreferenceModel(Base):
+    __tablename__ = "preferences"
+
+    id = Column(String, primary_key=True, index=True)
+    userId = Column(String, index=True)
+
+    prefType = Column(String, index=True, nullable=True)
+    rawText = Column(Text, nullable=False)
+    canonicalText = Column(Text, nullable=True)
+    createdAt = Column(String)
+
 # Create tables
 Base.metadata.create_all(bind=engine)
 
@@ -463,6 +475,105 @@ class DatabaseStorage:
 
         ranked = sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))
         return [{"route": route, "count": count} for route, count in ranked[: max(1, limit)]]
+
+    def add_preference(self, user_id: str, pref_type: str | None, raw_text: str, canonical_text: str | None = None) -> dict:
+        """Persist a preference record for deterministic Active Preferences."""
+        db = self.get_session()
+        try:
+            pref_id = str(__import__("uuid").uuid4())
+            now = datetime.now().isoformat()
+
+            raw_clean = _clean_text(raw_text) or ""
+            canon_clean = _clean_text(canonical_text)
+            type_clean = _clean_text(pref_type)
+
+            if not raw_clean:
+                return {"error": "Preference text is required"}
+
+            # Some preference types are mutually exclusive; keep only the most recent one.
+            if type_clean in {"cabin_class", "departure_time", "trip_type"}:
+                (
+                    db.query(PreferenceModel)
+                    .filter(PreferenceModel.userId == user_id)
+                    .filter(PreferenceModel.prefType == type_clean)
+                    .delete(synchronize_session=False)
+                )
+                db.commit()
+
+            db_pref = PreferenceModel(
+                id=pref_id,
+                userId=user_id,
+                prefType=type_clean,
+                rawText=raw_clean,
+                canonicalText=canon_clean,
+                createdAt=now,
+            )
+            db.add(db_pref)
+            db.commit()
+            db.refresh(db_pref)
+
+            return {
+                "id": db_pref.id,
+                "type": db_pref.prefType,
+                "raw": db_pref.rawText,
+                "canonical": db_pref.canonicalText,
+                "createdAt": db_pref.createdAt,
+            }
+        finally:
+            db.close()
+
+    def delete_preference(self, user_id: str, preference_text: str) -> dict:
+        """Delete preferences matching raw or canonical text for a user."""
+        db = self.get_session()
+        try:
+            target = _clean_text(preference_text)
+            if not target:
+                return {"error": "Preference text is required"}
+
+            rows = (
+                db.query(PreferenceModel)
+                .filter(PreferenceModel.userId == user_id)
+                .all()
+            )
+
+            deleted = 0
+            deleted_ids: list[str] = []
+            for r in rows:
+                if (r.rawText or "") == target or (r.canonicalText or "") == target:
+                    deleted_ids.append(r.id)
+                    db.delete(r)
+                    deleted += 1
+
+            if deleted:
+                db.commit()
+                return {"success": True, "deleted": deleted, "deleted_ids": deleted_ids, "deleted_text": target}
+
+            return {"error": "Preference not found"}
+        finally:
+            db.close()
+
+    def list_preferences(self, user_id: str) -> list[dict]:
+        """Return all saved preferences for a user (newest first)."""
+        db = self.get_session()
+        try:
+            rows = (
+                db.query(PreferenceModel)
+                .filter(PreferenceModel.userId == user_id)
+                .order_by(PreferenceModel.createdAt.desc())
+                .all()
+            )
+            return [
+                {
+                    "id": r.id,
+                    "type": r.prefType,
+                    "raw": r.rawText,
+                    "canonical": r.canonicalText,
+                    "createdAt": r.createdAt,
+                }
+                for r in rows
+            ]
+        finally:
+            db.close()
     
     def get_conversation(self, conversation_id: str) -> dict:
         """Get conversation by ID."""
@@ -513,7 +624,12 @@ class DatabaseStorage:
         """Get all conversations for a user."""
         db = self.get_session()
         try:
-            convs = db.query(ConversationModel).filter(ConversationModel.userId == user_id).all()
+            convs = (
+                db.query(ConversationModel)
+                .filter(ConversationModel.userId == user_id)
+                .order_by(ConversationModel.updatedAt.desc())
+                .all()
+            )
             return [
                 {
                     "id": conv.id,

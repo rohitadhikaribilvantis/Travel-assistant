@@ -84,6 +84,14 @@ export function useChat() {
           `new_preferences_${user.id}`,
           JSON.stringify(data.extractedPreferences)
         );
+
+        // Also dispatch an in-tab event so listeners can refresh immediately.
+        // (The 'storage' event does not fire in the same document that setItem runs in.)
+        window.dispatchEvent(
+          new CustomEvent("skymate:preferences-updated", {
+            detail: { extractedPreferences: data.extractedPreferences },
+          })
+        );
       }
     },
     onError: (error) => {

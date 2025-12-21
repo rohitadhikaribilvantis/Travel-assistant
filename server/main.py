@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from agent import process_message
+from agent import process_message, _infer_preference_memory_type
 from database import DatabaseStorage
 
 # ==================== Configuration ====================
@@ -384,7 +384,33 @@ async def chat(request: ChatRequest, current_user: dict = Depends(get_current_us
         from memory_manager import memory_manager
         if extracted_preferences:
             for pref in extracted_preferences:
-                memory_manager.store_preference(user_id, "general", pref)
+                pref_type = _infer_preference_memory_type(pref)
+
+                # Always persist to DB for deterministic Active Preferences.
+                try:
+                    canonical = memory_manager._canonicalize_preference_text(
+                        memory_manager._strip_preference_wrappers(pref)
+                    )
+                    storage.add_preference(user_id, pref_type, pref, canonical)
+                except Exception as e:
+                    print(f"[PREFS] Warning: failed to persist extracted preference to DB: {e}")
+
+                if pref_type:
+                    try:
+                        memory_manager.add_structured_memory(
+                            user_id=user_id,
+                            category="preference",
+                            content=pref,
+                            memory_type=pref_type,
+                            metadata={"extracted_at": datetime.now().isoformat(), "source": "chat_extraction"},
+                        )
+                    except Exception as e:
+                        print(f"[PREFS] Warning: failed to persist extracted preference to mem0: {e}")
+                else:
+                    try:
+                        memory_manager.store_preference(user_id, "general", pref)
+                    except Exception as e:
+                        print(f"[PREFS] Warning: failed to store general preference to mem0: {e}")
         
         response_message = ChatMessageModel(
             id=str(uuid.uuid4()),
@@ -548,7 +574,62 @@ async def get_user_preferences(current_user: dict = Depends(get_current_user)):
     """Get user's stored travel preferences."""
     from memory_manager import memory_manager
     try:
-        preferences = memory_manager.summarize_preferences(current_user["id"], include_ids=True)
+        user_id = current_user["id"]
+        preferences = memory_manager.summarize_preferences(user_id, include_ids=True) or {}
+
+        # Always merge DB preferences in so Active Preferences is deterministic.
+        try:
+            db_rows = storage.list_preferences(user_id)
+            latest_db_by_type: dict[str, dict] = {}
+            for r in db_rows or []:
+                t = r.get("type") or "other"
+                if t not in latest_db_by_type:
+                    latest_db_by_type[t] = r
+
+            for r in db_rows:
+                raw = r.get("raw")
+                canonical = r.get("canonical") or raw
+                pref_type = r.get("type")
+                key = pref_type or "other"
+
+                preferences.setdefault(key, [])
+                existing = preferences.get(key) or []
+
+                def _to_text(x):
+                    if isinstance(x, str):
+                        return x
+                    if isinstance(x, dict):
+                        return x.get("text") or x.get("memory")
+                    return str(x)
+
+                existing_texts = {(_to_text(x) or "").strip().lower() for x in existing}
+                candidate_texts = {(canonical or "").strip().lower(), (raw or "").strip().lower()}
+                if any(t and t in existing_texts for t in candidate_texts):
+                    continue
+
+                existing.append({"id": r.get("id"), "text": canonical, "memory": raw})
+                preferences[key] = existing
+        except Exception as e:
+            print(f"[PREFS] DB merge failed: {e}")
+
+        # Mutually exclusive preference types: DB latest wins (single item)
+        try:
+            for t in ["cabin_class", "departure_time", "trip_type"]:
+                row = None
+                try:
+                    row = latest_db_by_type.get(t)  # type: ignore[name-defined]
+                except Exception:
+                    row = None
+                if row:
+                    raw = row.get("raw")
+                    canonical = row.get("canonical") or raw
+                    preferences[t] = [{"id": row.get("id"), "text": canonical, "memory": raw}]
+                else:
+                    # If no DB value, at least avoid showing multiple conflicting values.
+                    if isinstance(preferences.get(t), list) and len(preferences.get(t) or []) > 1:
+                        preferences[t] = [preferences[t][0]]
+        except Exception as e:
+            print(f"[PREFS] Warning: failed to normalize exclusive preferences: {e}")
         
         # Filter out "general" type preferences (they shouldn't exist with new code, but clean up old ones)
         if "general" in preferences:
@@ -605,6 +686,7 @@ async def add_preference(request: dict, current_user: dict = Depends(get_current
     """Add a new preference entry to user's memory."""
     from memory_manager import memory_manager
     try:
+        user_id = current_user["id"]
         category = request.get("category", "preference")
         content = request.get("content")
         memory_type = request.get("type")
@@ -612,17 +694,31 @@ async def add_preference(request: dict, current_user: dict = Depends(get_current
         if not content:
             raise HTTPException(status_code=400, detail="Content is required")
         
-        result = memory_manager.add_structured_memory(
-            user_id=current_user["id"],
-            category=category,
-            content=content,
-            memory_type=memory_type,
-            metadata=request.get("metadata")
+        # mem0 is best-effort; DB persistence is the source of truth for UI.
+        result: dict = {}
+        try:
+            result = memory_manager.add_structured_memory(
+                user_id=user_id,
+                category=category,
+                content=content,
+                memory_type=memory_type,
+                metadata=request.get("metadata")
+            )
+        except Exception as e:
+            print(f"[PREFS] Warning: failed to persist preference to mem0: {e}")
+
+        # Always persist to DB so Active Preferences is deterministic.
+        canonical = memory_manager._canonicalize_preference_text(
+            memory_manager._strip_preference_wrappers(content)
         )
+        db_row = storage.add_preference(user_id, memory_type, content, canonical)
+        if isinstance(db_row, dict) and db_row.get("error"):
+            raise HTTPException(status_code=500, detail=db_row.get("error"))
         
         return {
-            "success": "error" not in result,
+            "success": True,
             "memory_id": result.get("id"),
+            "db_id": (db_row or {}).get("id") if isinstance(db_row, dict) else None,
             "content": content,
             "category": category,
             "type": memory_type
@@ -637,23 +733,43 @@ async def delete_preference(preference_text: str, current_user: dict = Depends(g
     """Delete a user's preference by text."""
     from memory_manager import memory_manager
     try:
-        print(f"[DELETE PREF] Attempting to delete preference: '{preference_text}' for user {current_user['id']}")
-        result = memory_manager.remove_preference(current_user["id"], preference_text)
-        
-        if "error" in result:
-            print(f"[DELETE PREF] Error: {result.get('error')}")
-            raise HTTPException(status_code=404, detail=result.get("error", "Preference not found"))
-        
-        if result.get("success"):
-            print(f"[DELETE PREF] Successfully deleted preference: {result.get('deleted_text')}")
+        user_id = current_user["id"]
+        print(f"[DELETE PREF] Attempting to delete preference: '{preference_text}' for user {user_id}")
+        canonical = memory_manager._canonicalize_preference_text(
+            memory_manager._strip_preference_wrappers(preference_text)
+        )
+
+        db_deleted = False
+        try:
+            db_result = storage.delete_preference(user_id, preference_text)
+            if db_result.get("success"):
+                db_deleted = True
+            if canonical and canonical != preference_text:
+                db_result2 = storage.delete_preference(user_id, canonical)
+                if db_result2.get("success"):
+                    db_deleted = True
+        except Exception as e:
+            print(f"[PREFS] Warning: failed to delete preference from DB: {e}")
+
+        mem0_deleted = False
+        mem0_result: dict = {}
+        try:
+            mem0_result = memory_manager.remove_preference(user_id, preference_text)
+            mem0_deleted = bool(mem0_result.get("success"))
+        except Exception as e:
+            print(f"[PREFS] Warning: failed to delete preference from mem0: {e}")
+
+        if db_deleted or mem0_deleted:
+            deleted_id = mem0_result.get("deleted_id") if isinstance(mem0_result, dict) else None
+            print(f"[DELETE PREF] Successfully deleted preference: '{preference_text}' (db={db_deleted}, mem0={mem0_deleted})")
             return {
                 "success": True,
                 "message": f"Preference removed successfully",
                 "deletedPreference": preference_text,
-                "deletedId": result.get("deleted_id")
+                "deletedId": deleted_id
             }
         else:
-            raise HTTPException(status_code=500, detail="Failed to delete preference")
+            raise HTTPException(status_code=404, detail="Preference not found")
     except HTTPException:
         raise
     except Exception as e:

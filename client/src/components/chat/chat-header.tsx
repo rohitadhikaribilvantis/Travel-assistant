@@ -64,6 +64,21 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
   const [isSavingCabinClass, setIsSavingCabinClass] = useState(false);
   const [isSavingAllPreferences, setIsSavingAllPreferences] = useState(false);
 
+  const prefToText = (pref: any): string => {
+    if (typeof pref === "string") return pref;
+    return pref?.text || pref?.memory || "";
+  };
+
+  // When chat learns a new preference, refresh the stored preference list.
+  useEffect(() => {
+    const handler = () => {
+      setRefreshTrigger(prev => prev + 1);
+      refreshPreferences();
+    };
+    window.addEventListener("skymate:preferences-updated", handler as EventListener);
+    return () => window.removeEventListener("skymate:preferences-updated", handler as EventListener);
+  }, [refreshPreferences]);
+
   // Listen for preference refresh events
   useEffect(() => {
     if (onPreferencesRefresh) {
@@ -76,15 +91,21 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
     if (preferencesOpen) {
       // Force refetch fresh data
       setTimeout(() => refreshPreferences(), 100);
-    } else {
-      // Reset all toggle states when sheet closes
-      setDirectFlightsOnly(false);
-      setAvoidRedEye(false);
-      setPreferredTime("");
-      setCabinClass("");
-      setTripType("");
     }
   }, [preferencesOpen, refreshPreferences]);
+
+  // When preferences are loaded while the sheet is open, sync UI controls to stored values.
+  useEffect(() => {
+    if (!preferencesOpen) return;
+    if (!memoryPreferences) return;
+
+    const redEyePrefs = (memoryPreferences as any)?.red_eye || [];
+    setAvoidRedEye(Array.isArray(redEyePrefs) && redEyePrefs.length > 0);
+
+    const flightTypePrefs = (memoryPreferences as any)?.flight_type || [];
+    const hasDirect = Array.isArray(flightTypePrefs) && flightTypePrefs.some((p: any) => prefToText(p).toLowerCase().includes("direct"));
+    setDirectFlightsOnly(!!hasDirect);
+  }, [memoryPreferences, preferencesOpen]);
 
   // Fetch bookings when travel history sheet opens
   useEffect(() => {
@@ -279,14 +300,74 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
     }
   };
 
-  const handleDirectFlightsToggle = (checked: boolean) => {
-    // Just update local state - Save button will handle actual saving
+  const handleDirectFlightsToggle = async (checked: boolean) => {
     setDirectFlightsOnly(checked);
+    if (!token) return;
+
+    try {
+      if (checked) {
+        await fetch("/api/memory/add-preference", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            category: "preference",
+            type: "flight_type",
+            content: "Direct flights only",
+          }),
+        });
+      } else {
+        await fetch(`/api/memory/preferences/${encodeURIComponent("Direct flights only")}`, {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        });
+      }
+    } catch (e) {
+      console.error("Error updating direct flights preference:", e);
+    } finally {
+      setRefreshTrigger((prev) => prev + 1);
+      refreshPreferences();
+    }
   };
 
-  const handleAvoidRedEyeToggle = (checked: boolean) => {
-    // Just update local state - Save button will handle actual saving
+  const handleAvoidRedEyeToggle = async (checked: boolean) => {
     setAvoidRedEye(checked);
+    if (!token) return;
+
+    try {
+      if (checked) {
+        await fetch("/api/memory/add-preference", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            category: "preference",
+            type: "red_eye",
+            content: "Avoid red-eye flights",
+          }),
+        });
+      } else {
+        await fetch(`/api/memory/preferences/${encodeURIComponent("Avoid red-eye flights")}`, {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        });
+      }
+    } catch (e) {
+      console.error("Error updating red-eye preference:", e);
+    } finally {
+      setRefreshTrigger((prev) => prev + 1);
+      refreshPreferences();
+    }
   };
 
   const handlePreferredTimeChange = (value: string) => {

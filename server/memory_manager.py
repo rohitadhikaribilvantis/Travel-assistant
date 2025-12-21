@@ -3,9 +3,13 @@ import re
 from typing import Optional, List, Dict, Literal
 from datetime import datetime
 
+from database import DatabaseStorage
+
 # Memory Schema Types
 PreferenceType = Literal["seat", "airline", "departure_time", "flight_type", "cabin_class", "red_eye", "baggage"]
 MemoryCategory = Literal["preference", "travel_history", "route", "airline", "budget"]
+
+_db_storage = DatabaseStorage()
 
 class TravelMemory:
     """Standard schema for travel memories."""
@@ -125,11 +129,12 @@ class TravelMemoryManager:
             else:
                 memories = results if isinstance(results, list) else []
 
-            # Filter out "general" type memories (old/confusing ones we don't want to display)
+            # Filter out explicitly-marked "Type: General" wrapper text.
+            # Do NOT filter on mem0's internal `type` field; some mem0 versions
+            # label many/all memories as type="general", which would hide valid preferences.
             filtered_memories = [
                 m for m in memories
-                if not (isinstance(m, dict) and m.get("type") == "general")
-                and not (isinstance(m, dict) and "Type: General" in str(m.get("memory", "")))
+                if not (isinstance(m, dict) and "Type: General" in str(m.get("memory", "")))
             ]
 
             # Clean up memory text by removing " for general" suffix
@@ -539,7 +544,18 @@ class TravelMemoryManager:
         If include_ids is True, returns objects with 'id', 'text', and 'memory' fields.
         """
         try:
-            all_memories = self.get_user_memories(user_id)
+            # Use a preference-focused query to avoid missing preferences due to
+            # semantic search returning only a narrow top set.
+            all_memories = self.get_user_memories(
+                user_id,
+                query=(
+                    "travel preference preferences seat window aisle airline carrier "
+                    "cabin class economy premium business first direct non-stop layover stops "
+                    "departure time morning afternoon evening red-eye red eye redeye baggage luggage "
+                    "one-way one way round trip round-trip"
+                ),
+                limit=150,
+            )
             print(f"[MEMORY] Raw memories retrieved: {all_memories}")
             
             summary = {
@@ -684,6 +700,58 @@ class TravelMemoryManager:
                         summary["other"].append(entry)
             
             print(f"[MEMORY] Final summary: {summary}")
+
+            # Merge DB-backed preferences so preference reads are deterministic.
+            try:
+                db_rows = _db_storage.list_preferences(user_id) or []
+                latest_db_by_type: dict[str, dict] = {}
+                for r in db_rows:
+                    t = r.get("type") or "other"
+                    if t not in latest_db_by_type:
+                        latest_db_by_type[t] = r
+
+                for r in db_rows:
+                    pref_type = (r.get("type") or "other").strip() if isinstance(r.get("type"), str) else (r.get("type") or "other")
+                    if pref_type not in summary:
+                        summary[pref_type] = []
+                    if pref_type not in seen_by_category:
+                        seen_by_category[pref_type] = set()
+
+                    raw = (r.get("raw") or "").strip()
+                    canonical = (r.get("canonical") or "").strip()
+                    display_text = canonical or raw
+                    display_lower = (display_text or "").strip().lower()
+                    if not display_lower:
+                        continue
+
+                    if display_lower in seen_by_category[pref_type]:
+                        continue
+
+                    if include_ids:
+                        entry = {"id": r.get("id"), "text": display_text, "memory": raw or display_text}
+                    else:
+                        entry = display_text
+
+                    summary[pref_type].append(entry)
+                    seen_by_category[pref_type].add(display_lower)
+
+                # Mutually exclusive types: overwrite with DB latest only.
+                for t in ["cabin_class", "departure_time", "trip_type"]:
+                    row = latest_db_by_type.get(t)
+                    if not row:
+                        continue
+                    raw = (row.get("raw") or "").strip()
+                    canonical = (row.get("canonical") or "").strip()
+                    display_text = canonical or raw
+                    if not display_text:
+                        continue
+                    if include_ids:
+                        summary[t] = [{"id": row.get("id"), "text": display_text, "memory": raw or display_text}]
+                    else:
+                        summary[t] = [display_text]
+            except Exception as e:
+                print(f"[MEMORY] Warning: failed to merge DB preferences: {e}")
+
             # Remove empty categories
             return {k: v for k, v in summary.items() if v}
         except Exception as e:

@@ -419,10 +419,49 @@ def _recommendations_from_history(user_id: str, *, solo: bool) -> str:
 
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
+
+def _infer_preference_memory_type(preference_text: str) -> str | None:
+    """Infer a structured preference type from free-form preference text."""
+    if not isinstance(preference_text, str):
+        return None
+    t = preference_text.strip().lower()
+    if not t:
+        return None
+
+    if "red eye" in t or "red-eye" in t or "redeye" in t:
+        return "red_eye"
+    if "non-stop" in t or "nonstop" in t or "direct" in t or "layover" in t or "stops" in t:
+        return "flight_type"
+    if "cabin" in t or "class" in t or any(k in t for k in ["economy", "premium", "business", "first"]):
+        return "cabin_class"
+    if "morning" in t or "afternoon" in t or "evening" in t or "departure" in t:
+        return "departure_time"
+    if "window" in t or "aisle" in t or "seat" in t:
+        return "seat"
+    if "baggage" in t or "luggage" in t or "carry-on" in t or "checked" in t:
+        return "baggage"
+    if "airline" in t or "carrier" in t:
+        return "airline"
+    if "one-way" in t or "one way" in t or "round trip" in t or "round-trip" in t:
+        # Backend summary uses key trip_type; memory_manager types don't currently include it.
+        # Leave untyped so canonicalization + categorization still works.
+        return None
+
+    return None
+
 def extract_preferences_from_message(user_message: str) -> list[str]:
     """Extract detailed preference statements from user messages."""
     preferences = []
     message_lower = user_message.lower()
+
+    # Cabin class preferences (important for immediate re-search)
+    cabin_patterns: list[tuple[str, str]] = [
+        (r"premium\s+economy", "I prefer Premium Economy class flights"),
+        (r"\bbusiness\b", "I prefer Business class flights"),
+        (r"\bfirst\b", "I prefer First Class flights"),
+        # Economy must come after premium economy
+        (r"\beconomy\b", "I prefer Economy class flights"),
+    ]
     
     # Seat preferences
     seat_patterns = [
@@ -472,6 +511,13 @@ def extract_preferences_from_message(user_message: str) -> list[str]:
         (r"(?:budget|cheap|low\s+cost)", "budget conscious"),
         (r"(?:luxury|premium|first\s+class|business\s+class)", "luxury travel"),
     ]
+
+    # Red-eye preferences
+    red_eye_patterns = [
+        (r"red\s*-?eye", "Avoid red-eye flights"),
+        (r"redeye", "Avoid red-eye flights"),
+        (r"(?:hate|avoid|don\s*'?t\s+like|do\s+not\s+like)\s+.*red\s*-?eye", "Avoid red-eye flights"),
+    ]
     
     # Location/home preferences
     location_patterns = [
@@ -480,7 +526,8 @@ def extract_preferences_from_message(user_message: str) -> list[str]:
     
     all_patterns = [
         seat_patterns, airline_patterns, time_patterns, 
-        flight_patterns, passenger_patterns, baggage_patterns, budget_patterns
+        flight_patterns, passenger_patterns, baggage_patterns, budget_patterns, red_eye_patterns,
+        cabin_patterns,
     ]
     
     for pattern_group in all_patterns:
@@ -497,6 +544,38 @@ def extract_preferences_from_message(user_message: str) -> list[str]:
             unique_prefs.append(pref)
     
     return unique_prefs
+
+
+def _augment_current_preferences_from_message(current_preferences: Optional[dict], user_message: str) -> dict:
+    """Best-effort: turn free-form messages like 'economy please' into current prefs.
+
+    This affects the *current* search immediately even if the user didn't open the UI dropdown.
+    """
+    merged = dict(current_preferences or {})
+    if not isinstance(user_message, str):
+        return merged
+
+    t = user_message.lower()
+
+    # Cabin class
+    if "premium" in t and "economy" in t:
+        merged["cabinClass"] = "Premium Economy"
+    elif re.search(r"\bfirst\b", t):
+        merged["cabinClass"] = "First Class"
+    elif re.search(r"\bbusiness\b", t):
+        merged["cabinClass"] = "Business"
+    elif re.search(r"\beconomy\b", t):
+        merged["cabinClass"] = "Economy"
+
+    # Red-eye avoidance
+    if re.search(r"red\s*-?eye|redeye", t) and re.search(r"hate|avoid|don't\s+like|do\s+not\s+like|no\s+red", t):
+        merged["avoidRedEye"] = True
+
+    # Direct flights
+    if re.search(r"\bdirect\b|non\s*-?stop", t) and re.search(r"only|prefer|please|want|need", t):
+        merged["directFlightsOnly"] = True
+
+    return merged
 
 TOOLS = [
     {
@@ -716,6 +795,10 @@ def get_preference_overrides(user_id: str, current_preferences: Optional[dict] =
         prefs = memory_manager.summarize_preferences(user_id)
         print(f"[PREFS DEBUG] Summarized preferences for user {user_id}: {prefs}")
 
+        # Build a post-filtering preference payload for the flight results.
+        # This is used by amadeus_client._filter_flights_by_preferences.
+        user_preferences: dict = {}
+
         # Apply current UI preferences first (highest priority)
         if current_preferences:
             cabin = current_preferences.get("cabinClass")
@@ -737,10 +820,15 @@ def get_preference_overrides(user_id: str, current_preferences: Optional[dict] =
             if current_preferences.get("directFlightsOnly") is True:
                 overrides["non_stop"] = True
                 applied_prefs.append("direct/non-stop (current selection)")
+
+            if current_preferences.get("avoidRedEye") is True:
+                user_preferences["avoid_red_eye"] = True
+                applied_prefs.append("avoid red-eye flights (current selection)")
         
         # Check for passenger preferences
-        if prefs.get("seat_preferences"):
-            seat_text = " ".join([str(item) for item in prefs["seat_preferences"]]).lower()
+        passenger_items = (prefs.get("seat_preferences") or prefs.get("passenger") or prefs.get("passenger_preferences") or [])
+        if passenger_items:
+            seat_text = " ".join([str(item) for item in passenger_items]).lower()
             print(f"[PREFS DEBUG] Seat preferences found: {seat_text}")
             if "alone" in seat_text or "solo" in seat_text:
                 overrides["adults"] = 1
@@ -754,8 +842,9 @@ def get_preference_overrides(user_id: str, current_preferences: Optional[dict] =
         
         # Check for cabin class preferences - improved matching
         # (Only apply if current UI selection didn't already set it)
-        if not overrides.get("travel_class") and prefs.get("cabin_class_preferences"):
-            cabin_text = " ".join([str(item) for item in prefs["cabin_class_preferences"]]).lower()
+        cabin_items = (prefs.get("cabin_class_preferences") or prefs.get("cabin_class") or [])
+        if not overrides.get("travel_class") and cabin_items:
+            cabin_text = " ".join([str(item) for item in cabin_items]).lower()
             print(f"[PREFS DEBUG] Cabin class preferences found: {cabin_text}")
             # Check in order of priority to avoid false matches
             if "first" in cabin_text and "class" in cabin_text:
@@ -774,12 +863,21 @@ def get_preference_overrides(user_id: str, current_preferences: Optional[dict] =
             print(f"[PREFS DEBUG] No cabin class preferences stored for user {user_id}")
         
         # Check for direct flight preferences (only if UI didn't already set it)
-        if overrides.get("non_stop") is None and prefs.get("flight_type_preferences"):
-            flight_text = " ".join([str(item) for item in prefs["flight_type_preferences"]]).lower()
+        flight_items = (prefs.get("flight_type_preferences") or prefs.get("flight_type") or [])
+        if overrides.get("non_stop") is None and flight_items:
+            flight_text = " ".join([str(item) for item in flight_items]).lower()
             print(f"[PREFS DEBUG] Flight type preferences found: {flight_text}")
             if "direct" in flight_text or "non-stop" in flight_text:
                 overrides["non_stop"] = True
                 applied_prefs.append("direct/non-stop preference")
+
+        # Check for red-eye avoidance (only if UI didn't already set it)
+        if user_preferences.get("avoid_red_eye") is not True:
+            red_eye_items = (prefs.get("red_eye_preferences") or prefs.get("red_eye") or [])
+            red_eye_text = " ".join([str(item) for item in red_eye_items]).lower()
+            if red_eye_text and ("red" in red_eye_text and "eye" in red_eye_text):
+                user_preferences["avoid_red_eye"] = True
+                applied_prefs.append("avoid red-eye flights preference")
         
         # Check for time/departure preferences
         if prefs.get("time_preferences") or prefs.get("departure_time"):
@@ -788,6 +886,7 @@ def get_preference_overrides(user_id: str, current_preferences: Optional[dict] =
             print(f"[PREFS DEBUG] Time preferences found: {time_text}")
             if time_text:
                 overrides["time_preference"] = time_text
+                user_preferences["departure_time_preferences"] = [time_text]
                 if "morning" in time_text:
                     applied_prefs.append("morning flights")
                 elif "afternoon" in time_text:
@@ -798,6 +897,7 @@ def get_preference_overrides(user_id: str, current_preferences: Optional[dict] =
                     applied_prefs.append(f"time preference: {time_text}")
         
         overrides["applied_prefs_summary"] = " & ".join(applied_prefs) if applied_prefs else None
+        overrides["user_preferences"] = user_preferences
         print(f"[PREFS] Extracted overrides for user {user_id}: {overrides}")
         return overrides
     except Exception as e:
@@ -828,6 +928,7 @@ def execute_tool(tool_name: str, arguments: dict, user_id: str, current_preferen
         adults = overrides.get("adults", adults)
         travel_class = overrides.get("travel_class", travel_class)
         non_stop = overrides.get("non_stop", non_stop)
+        user_preferences = overrides.get("user_preferences") or {}
         
         print(f"[FLIGHT] After applying preferences: adults={adults}, class={travel_class}, non_stop={non_stop} (type={type(non_stop)})")
         
@@ -841,7 +942,8 @@ def execute_tool(tool_name: str, arguments: dict, user_id: str, current_preferen
                 return_date=return_date,
                 adults=adults,
                 travel_class=travel_class,
-                non_stop=non_stop
+                non_stop=non_stop,
+                user_preferences=user_preferences,
             )
             
             print(f"[FLIGHT SEARCH] Result: {result}")
@@ -854,7 +956,11 @@ def execute_tool(tool_name: str, arguments: dict, user_id: str, current_preferen
             tagged_flights = amadeus_client.tag_flight_offers(flights)
             
             print(f"[FLIGHT SEARCH] Found {len(tagged_flights)} flights")
-            return {"flights": tagged_flights, "count": len(tagged_flights)}
+            return {
+                "flights": tagged_flights,
+                "count": len(tagged_flights),
+                "applied_preferences": overrides.get("applied_prefs_summary"),
+            }
         except Exception as e:
             print(f"[FLIGHT SEARCH] Exception: {str(e)}")
             import traceback
@@ -865,12 +971,14 @@ def execute_tool(tool_name: str, arguments: dict, user_id: str, current_preferen
         preference = arguments.get("preference", "")
         print(f"[PREF] Storing preference: {preference}")
         
-        # Store the preference directly
+        pref_type = _infer_preference_memory_type(preference)
+        # Store the preference directly. Avoid forcing memory_type="general" since
+        # the memory layer intentionally filters "general" entries from the UI.
         result = memory_manager.add_structured_memory(
             user_id=user_id,
             category="preference",
             content=preference,
-            memory_type="general",
+            memory_type=pref_type,
             metadata={"extracted_at": datetime.now().isoformat()}
         )
         
@@ -959,6 +1067,10 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
     """
     if conversation_history is None:
         conversation_history = []
+
+    # Convert free-form messages like "economy please" into effective current preferences
+    # so the next search uses the updated cabin class immediately.
+    current_preferences = _augment_current_preferences_from_message(current_preferences, user_message)
     if current_preferences is None:
         current_preferences = {}
     
@@ -1264,7 +1376,7 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
                 if tool_name == "search_flights" and result.get("flights"):
                     flight_results = result["flights"]
                     # Get preference summary for this search
-                    overrides = get_preference_overrides(user_id)
+                    overrides = get_preference_overrides(user_id, current_preferences)
                     applied_prefs_summary = overrides.get("applied_prefs_summary")
                 
                 if tool_name == "remember_preference":
@@ -1306,18 +1418,9 @@ def process_message(user_message: str, user_id: str = "default-user", conversati
             if greeting_prefix:
                 final_content = greeting_prefix + final_content
             
-            # Extract preferences from user message and store them individually
+            # Extract preferences from user message (persistence handled by API layer)
             extracted_preferences = extract_preferences_from_message(user_message)
             print(f"[AGENT] Extracted preferences from message: {extracted_preferences}")
-            
-            if extracted_preferences:
-                for pref_label in extracted_preferences:
-                    # Map labels to preference types and store individually
-                    print(f"[AGENT] Storing preference: {pref_label}")
-                    result = memory_manager.store_preference(user_id, "general", pref_label)
-                    print(f"[AGENT] Preference storage result: {result}")
-                    if "error" in result:
-                        print(f"[AGENT ERROR] Failed to store preference '{pref_label}': {result['error']}")
             
             # Also do the general memory extraction
             memory_manager.extract_and_store_preferences(user_id, user_message, final_content)

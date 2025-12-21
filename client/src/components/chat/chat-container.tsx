@@ -11,10 +11,11 @@ import type { ChatMessage, FlightOffer } from "@shared/schema";
 interface ChatContainerProps {
   messages: ChatMessage[];
   isLoading?: boolean;
+  isLoadingConversation?: boolean;
   onBooking?: () => void;
 }
 
-export function ChatContainer({ messages, isLoading, onBooking }: ChatContainerProps) {
+export function ChatContainer({ messages, isLoading, isLoadingConversation, onBooking }: ChatContainerProps) {
   const { user } = useAuth();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -23,10 +24,19 @@ export function ChatContainer({ messages, isLoading, onBooking }: ChatContainerP
   const [currentFlights, setCurrentFlights] = useState<FlightOffer[] | null>(null);
 
   useEffect(() => {
+    // When a conversation is being loaded (typically after refresh), do not auto-scroll
+    // to the bottom. Users expect to read the conversation from the top.
+    if (isLoadingConversation) {
+      const root = scrollRef.current;
+      const viewport = root?.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]");
+      if (viewport) viewport.scrollTop = 0;
+      return;
+    }
+
     if (bottomRef.current) {
       bottomRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages, isLoading]);
+  }, [messages, isLoading, isLoadingConversation]);
 
   // Extract journey details from messages
   const extractJourneyInfo = () => {
