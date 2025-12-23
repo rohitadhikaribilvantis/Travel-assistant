@@ -93,6 +93,17 @@ export function useChat() {
           })
         );
       }
+
+      // If the server performed a preference-management action (delete/clear),
+      // trigger the same refresh event so the preferences panel updates without
+      // requiring any buttons.
+      if (data.preferencesAction) {
+        window.dispatchEvent(
+          new CustomEvent("skymate:preferences-updated", {
+            detail: { preferencesAction: data.preferencesAction },
+          })
+        );
+      }
     },
     onError: (error) => {
       const errorMessage: ChatMessage = {

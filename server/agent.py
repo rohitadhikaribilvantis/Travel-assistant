@@ -454,7 +454,44 @@ def extract_preferences_from_message(user_message: str) -> list[str]:
     preferences = []
     message_lower = user_message.lower()
 
-    # Cabin class preferences (important for immediate re-search)
+    # ---------------- Intent gating (IMPORTANT) ----------------
+    # We only store preferences as long-lived memory when the user explicitly
+    # expresses lasting intent (e.g., "remember", "I prefer", "from now on").
+    # If the user uses ephemeral phrasing (e.g., "choose", "should work", "for this trip only"),
+    # we treat it as *current chat/search only* and do NOT return extracted preferences
+    # (so the /api/chat endpoint won't persist them).
+    strong_persist_intent_re = re.compile(
+        r"\b(remember|from\s+now\s+on|going\s+forward|in\s+the\s+future|set\s+(?:this|it)\s+as\s+(?:my\s+)?default|make\s+(?:this|it)\s+my\s+default|default\s+to)\b",
+        re.IGNORECASE,
+    )
+    soft_persist_intent_re = re.compile(
+        r"\b(prefer|like|love|usually|typically|always)\b",
+        re.IGNORECASE,
+    )
+    ephemeral_intent_re = re.compile(
+        r"\b("
+        r"choose|pick|select|"
+        r"(?:let\s+us|let's|lets)\s+(?:go\s+with|do|pick|choose)|"
+        r"go\s+with|"
+        r"should\s+work|should\s+be\s+fine|(?:that|this)\s+should\s+be\s+fine|"
+        r"(?:that|this)\s+is\s+fine|either\s+is\s+fine|any\s+is\s+fine|"
+        r"whatever\s+works|"
+        r"just\s+this\s+time|this\s+time\s+only|for\s+now|"
+        r"for\s+this\s+(?:search|trip|flight|chat|conversation|demo)|"
+        r"only\s+for\s+this\s+(?:search|trip|flight|chat|conversation|demo)"
+        r")\b",
+        re.IGNORECASE,
+    )
+
+    has_strong_intent = bool(strong_persist_intent_re.search(user_message or ""))
+    has_soft_intent = bool(soft_persist_intent_re.search(user_message or ""))
+    has_ephemeral_intent = bool(ephemeral_intent_re.search(user_message or ""))
+
+    allow_persist = has_strong_intent or (has_soft_intent and not has_ephemeral_intent)
+    if not allow_persist:
+        return []
+
+    # Cabin class preferences (stored only when allow_persist=True)
     cabin_patterns: list[tuple[str, str]] = [
         (r"premium\s+economy", "I prefer Premium Economy class flights"),
         (r"\bbusiness\b", "I prefer Business class flights"),

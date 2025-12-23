@@ -33,6 +33,18 @@ except Exception:
 # Initialize database storage
 storage = DatabaseStorage()
 
+# ==================== FastAPI App ====================
+app = FastAPI()
+
+# CORS (dev-friendly defaults)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # ==================== Data Models ====================
 class TokenPayload(BaseModel):
     userId: str
@@ -146,17 +158,11 @@ def extract_token(authorization: Optional[str]) -> Optional[str]:
     return authorization[7:]
 
 async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
-    if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing authorization header",
-        )
-
     token = extract_token(authorization)
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token format",
+            detail="Missing or invalid authorization header",
         )
 
     payload = verify_token(token)
@@ -169,110 +175,50 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     user = storage.get_user(payload.userId)
     if not user:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
         )
 
     return user
 
-# ==================== FastAPI App ====================
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print(f"[FastAPI] Travel Assistant Backend started on port {PYTHON_BACKEND_PORT}")
-    yield
-    print("[FastAPI] Travel Assistant Backend shutting down")
 
-app = FastAPI(
-    title="Travel Assistant API",
-    description="Agentic travel assistant with flight search",
-    version="1.0.0",
-    lifespan=lifespan,
-)
-
-# CORS Configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ==================== Health Check ====================
-@app.get("/api/health")
-async def health_check():
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-    }
-
-# ==================== Authentication Routes ====================
-@app.post("/api/auth/register", status_code=201)
+@app.post("/api/auth/register")
 async def register(user_data: UserCreate):
     try:
-        # Check if email exists
-        if storage.get_user_by_email(user_data.email):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Email already registered",
-            )
+        existing_email = storage.get_user_by_email(user_data.email)
+        if existing_email:
+            return JSONResponse(status_code=400, content={"error": "Email already registered"})
 
-        # Check if username exists
-        if storage.get_user_by_username(user_data.username):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Username already taken",
-            )
+        existing_username = storage.get_user_by_username(user_data.username)
+        if existing_username:
+            return JSONResponse(status_code=400, content={"error": "Username already taken"})
 
-        # Create user
         password_hash = hash_password(user_data.password)
         user = storage.create_user(user_data, password_hash)
-
-        # Generate token
         token = generate_token(user)
 
-        # Return response without password
         user_response = UserResponse(
             id=user["id"],
             email=user["email"],
             username=user["username"],
-            fullName=user["fullName"],
-            avatar=user["avatar"],
+            fullName=user.get("fullName"),
+            avatar=user.get("avatar"),
             createdAt=user["createdAt"],
             updatedAt=user["updatedAt"],
         )
 
-        return JSONResponse(
-            status_code=201,
-            content={
-                "user": user_response.model_dump(),
-                "token": token
-            }
-        )
-    except HTTPException:
-        raise
+        return JSONResponse(status_code=200, content={"user": user_response.model_dump(), "token": token})
     except Exception as e:
         print(f"[ERROR] Register endpoint: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Registration failed: {str(e)}",
-        )
+        return JSONResponse(status_code=500, content={"error": "Registration failed"})
+
 
 @app.post("/api/auth/login")
 async def login(credentials: LoginRequest):
     try:
         user = storage.get_user_by_email(credentials.email)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials",
-            )
-
-        if not verify_password(credentials.password, user["passwordHash"]):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials",
-            )
+        if not user or not verify_password(credentials.password, user["passwordHash"]):
+            return JSONResponse(status_code=401, content={"error": "Invalid credentials"})
 
         token = generate_token(user)
 
@@ -280,27 +226,16 @@ async def login(credentials: LoginRequest):
             id=user["id"],
             email=user["email"],
             username=user["username"],
-            fullName=user["fullName"],
-            avatar=user["avatar"],
+            fullName=user.get("fullName"),
+            avatar=user.get("avatar"),
             createdAt=user["createdAt"],
             updatedAt=user["updatedAt"],
         )
 
-        return JSONResponse(
-            status_code=200,
-            content={
-                "user": user_response.model_dump(),
-                "token": token
-            }
-        )
-    except HTTPException:
-        raise
+        return JSONResponse(status_code=200, content={"user": user_response.model_dump(), "token": token})
     except Exception as e:
         print(f"[ERROR] Login endpoint: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Login failed: {str(e)}",
-        )
+        return JSONResponse(status_code=500, content={"error": "Login failed"})
 
 @app.get("/api/auth/me", response_model=UserResponse)
 async def get_current_profile(current_user: dict = Depends(get_current_user)):
@@ -337,6 +272,363 @@ async def update_profile(
     )
 
 # ==================== Chat Routes ====================
+def _build_preferences_snapshot(user_id: str) -> dict:
+    """Return the same preference payload used by /api/memory/preferences.
+
+    This keeps chat responses consistent with the "Active Preferences" UI.
+    """
+    from memory_manager import memory_manager
+
+    preferences = memory_manager.summarize_preferences(user_id, include_ids=True) or {}
+
+    def _pref_text(x):
+        if isinstance(x, str):
+            return x
+        if isinstance(x, dict):
+            return x.get("text") or x.get("memory") or ""
+        return str(x) if x is not None else ""
+
+    # Always merge DB preferences in so Active Preferences is deterministic.
+    latest_db_by_type: dict[str, dict] = {}
+    try:
+        db_rows = storage.list_preferences(user_id) or []
+        for r in db_rows or []:
+            t = r.get("type") or "other"
+            if t not in latest_db_by_type:
+                latest_db_by_type[t] = r
+
+        for r in db_rows:
+            raw = r.get("raw")
+            canonical = r.get("canonical") or raw
+            pref_type = r.get("type")
+            key = pref_type or "other"
+
+            preferences.setdefault(key, [])
+            existing = preferences.get(key) or []
+
+            existing_texts = {(_pref_text(x) or "").strip().lower() for x in existing}
+            candidate_texts = {(canonical or "").strip().lower(), (raw or "").strip().lower()}
+            if any(t and t in existing_texts for t in candidate_texts):
+                continue
+
+            existing.append({"id": r.get("id"), "text": canonical, "memory": raw})
+            preferences[key] = existing
+    except Exception as e:
+        print(f"[PREFS] DB merge failed: {e}")
+
+    # Mutually exclusive preference types: DB latest wins (single item)
+    try:
+        for t in ["cabin_class", "departure_time", "trip_type", "passenger"]:
+            row = latest_db_by_type.get(t)
+            if not row:
+                continue
+
+            raw = row.get("raw")
+            canonical = row.get("canonical") or raw
+            if not (raw or canonical):
+                continue
+
+            # Replace the entire category with the canonical DB row.
+            preferences[t] = [{"id": row.get("id"), "text": canonical, "memory": raw}]
+    except Exception:
+        pass
+
+    # Filter out noisy items and normalize buckets.
+    try:
+        passenger_markers = ["traveling alone", "travelling alone", "solo", "with family", "kids", "children", "with partner", "spouse"]
+
+        for k in list(preferences.keys()):
+            items = preferences.get(k) or []
+            filtered = []
+            for item in items:
+                t = _pref_text(item).strip().lower()
+                if "luxury" in t:
+                    continue
+                filtered.append(item)
+            preferences[k] = filtered
+            if not preferences[k]:
+                preferences.pop(k, None)
+
+        # Then, move passenger-like entries out of "other".
+        other_items = preferences.get("other") or []
+        if other_items:
+            passenger_bucket = preferences.get("passenger") or []
+            passenger_texts = {_pref_text(x).strip().lower() for x in passenger_bucket}
+            kept_other = []
+            for item in other_items:
+                t = _pref_text(item).strip().lower()
+                if any(m in t for m in passenger_markers):
+                    if t and t not in passenger_texts:
+                        passenger_bucket.append(item)
+                        passenger_texts.add(t)
+                    continue
+                kept_other.append(item)
+            if passenger_bucket:
+                preferences["passenger"] = passenger_bucket
+            preferences["other"] = kept_other
+            if not preferences["other"]:
+                preferences.pop("other", None)
+    except Exception:
+        pass
+
+    return {
+        "userId": user_id,
+        "preferences": preferences,
+        "count": sum(len(v) for v in (preferences or {}).values()),
+    }
+
+def _handle_preference_query_command(user_id: str, message: str) -> Optional[dict]:
+    """Handle natural-language queries like 'what are my current preferences?'"""
+    if not isinstance(message, str):
+        return None
+
+    text = message.strip()
+    if not text:
+        return None
+
+    lower = text.lower()
+    if not (
+        re.search(r"\b(my|current)\b", lower)
+        and re.search(r"\b(preferences|preference)\b", lower)
+        and re.search(r"\b(what|show|list|tell)\b", lower)
+    ):
+        return None
+
+    snapshot = _build_preferences_snapshot(user_id)
+    prefs = snapshot.get("preferences") or {}
+
+    def _pref_text(x):
+        if isinstance(x, str):
+            return x
+        if isinstance(x, dict):
+            return x.get("text") or x.get("memory") or ""
+        return str(x) if x is not None else ""
+
+    # Simple, deterministic ordering for readability
+    order = [
+        "cabin_class",
+        "flight_type",
+        "departure_time",
+        "red_eye",
+        "trip_type",
+        "seat",
+        "baggage",
+        "airline",
+        "passenger",
+        "other",
+        "general",
+    ]
+
+    lines: list[str] = []
+    total = int(snapshot.get("count") or 0)
+    if total <= 0:
+        return {
+            "content": "You don't have any saved travel preferences yet.",
+            "preferencesAction": {"action": "query"},
+        }
+
+    lines.append("Here are your current saved travel preferences:")
+    lines.append("")
+    for key in order:
+        items = prefs.get(key) or []
+        if not items:
+            continue
+        for it in items:
+            t = _pref_text(it).strip()
+            if not t:
+                continue
+            lines.append(f"- {t}")
+
+    return {
+        "content": "\n".join(lines),
+        "preferencesAction": {"action": "query"},
+    }
+
+def _handle_preference_management_command(user_id: str, message: str) -> Optional[dict]:
+    """Handle natural-language preference management commands.
+
+    Returns a dict with keys:
+      - content: assistant response text
+      - preferencesAction: metadata for client refresh
+    or None if not a preference-management command.
+
+    Notes:
+    - DB is the UI source-of-truth.
+    - mem0 operations are best-effort.
+    """
+    if not isinstance(message, str):
+        return None
+
+    text = message.strip()
+    if not text:
+        return None
+
+    lower = text.lower()
+
+    # Gate: only run if this looks like a delete/clear intent.
+    # We intentionally do NOT require the word "preference" here because users often say
+    # things like "delete my cabin class".
+    delete_verbs = r"(forget|delete|remove|clear|wipe|reset)"
+    if not re.search(rf"\b{delete_verbs}\b", lower):
+        return None
+
+    from memory_manager import memory_manager
+
+    def _delete_db_texts(texts: list[str]) -> int:
+        deleted = 0
+        for t in texts:
+            t2 = (t or "").strip()
+            if not t2:
+                continue
+            try:
+                res = storage.delete_preference(user_id, t2)
+                if isinstance(res, dict) and res.get("success"):
+                    deleted += int(res.get("deleted") or 0)
+            except Exception as e:
+                print(f"[PREFS NL] DB delete failed for '{t2}': {e}")
+        return deleted
+
+    # 1) Clear ALL preferences
+    if re.search(r"\b(all|everything)\b", lower) and re.search(r"\b(preferences|preference)\b", lower):
+        # Delete DB-backed preferences
+        db_rows = storage.list_preferences(user_id) or []
+        db_deleted = 0
+        for r in db_rows:
+            raw = (r.get("raw") or "").strip()
+            canonical = (r.get("canonical") or "").strip()
+            db_deleted += _delete_db_texts([raw, canonical])
+
+        # Best-effort clear mem0 preferences
+        mem0_result: dict = {}
+        try:
+            mem0_result = memory_manager.clear_all_preferences(user_id)
+        except Exception as e:
+            print(f"[PREFS NL] mem0 clear failed: {e}")
+
+        return {
+            "content": "Done — I cleared all your saved travel preferences. Your travel history is kept.",
+            "preferencesAction": {
+                "action": "clear_all",
+                "db_deleted": db_deleted,
+                "mem0": mem0_result,
+            },
+        }
+
+    # 2) Delete a specific preference by quoted text, e.g. delete "Direct flights only"
+    quoted = re.search(r"['\"]([^'\"]{3,200})['\"]", text)
+    if quoted:
+        target = quoted.group(1).strip()
+        if target:
+            canonical = memory_manager._canonicalize_preference_text(
+                memory_manager._strip_preference_wrappers(target)
+            )
+            deleted = _delete_db_texts([target, canonical])
+
+            # Best-effort delete in mem0
+            try:
+                memory_manager.remove_preference(user_id, target)
+            except Exception:
+                pass
+            if canonical and canonical != target:
+                try:
+                    memory_manager.remove_preference(user_id, canonical)
+                except Exception:
+                    pass
+
+            if deleted:
+                return {
+                    "content": f"Got it — I removed that preference: {target}.",
+                    "preferencesAction": {"action": "delete_one", "deleted_text": target},
+                }
+
+            return {
+                "content": f"I couldn't find a saved preference matching: {target}.",
+                "preferencesAction": {"action": "delete_one", "deleted_text": target, "not_found": True},
+            }
+
+    # 3) Delete by category/type (delete the most recent saved preference of that type)
+    # Map natural language → DB preference types
+    type_rules: list[tuple[str, list[str]]] = [
+        ("cabin_class", [r"cabin\s+class", r"travel\s+class", r"seat\s+class", r"class\s+preference"]),
+        ("flight_type", [r"direct\s+flights?", r"non\s*-?stop", r"layovers?", r"stops?", r"flight\s+type"]),
+        ("red_eye", [r"red\s*-?eye", r"redeye"]),
+        ("departure_time", [r"departure\s+time", r"time\s+preference"]),
+        ("trip_type", [r"trip\s+type", r"one\s*-?way", r"round\s+trip"]),
+        ("seat", [r"seat\s+preference", r"window\s+seat", r"aisle\s+seat", r"exit\s+row", r"middle\s+seat"]),
+        ("baggage", [r"baggage", r"luggage", r"carry\s*-?on", r"checked\s+bag"]),
+        ("airline", [r"airline", r"carrier"]),
+        ("passenger", [r"passenger", r"traveling\s+alone", r"travelling\s+alone", r"solo", r"with\s+family", r"with\s+partner", r"kids", r"children"]),
+    ]
+
+    target_type: str | None = None
+    for pref_type, patterns in type_rules:
+        if any(re.search(p, lower) for p in patterns):
+            target_type = pref_type
+            break
+
+    # Heuristic: if user says delete/forget + (economy/business/first/premium) + preference,
+    # treat it as cabin class.
+    if not target_type and re.search(r"\b(preference|preferences|memory)\b", lower) and re.search(
+        r"\b(economy|business|first|premium\s+economy)\b", lower
+    ):
+        target_type = "cabin_class"
+
+    if target_type:
+        db_rows = storage.list_preferences(user_id) or []
+        row = next((r for r in db_rows if (r.get("type") or "").strip() == target_type), None)
+        if not row:
+            # DB is the UI source-of-truth, but older deployments or intermittent DB failures
+            # may leave a preference only in mem0. Try best-effort mem0 deletion by type.
+            try:
+                mem0_res = memory_manager.remove_preferences_by_type(user_id, target_type)
+                mem0_deleted = int((mem0_res or {}).get("deleted") or 0) if isinstance(mem0_res, dict) else 0
+            except Exception:
+                mem0_res = {}
+                mem0_deleted = 0
+
+            if mem0_deleted > 0:
+                label = target_type.replace("_", " ")
+                return {
+                    "content": f"Done — I removed your saved {label} preference.",
+                    "preferencesAction": {"action": "delete_type", "type": target_type, "mem0": mem0_res},
+                }
+
+            return {
+                "content": "I couldn't find a saved preference of that type to remove.",
+                "preferencesAction": {"action": "delete_type", "type": target_type, "not_found": True},
+            }
+
+        raw = (row.get("raw") or "").strip()
+        canonical = (row.get("canonical") or "").strip()
+        deleted = _delete_db_texts([raw, canonical])
+
+        # Best-effort delete in mem0 (by type is the most reliable), then fall back to text.
+        try:
+            memory_manager.remove_preferences_by_type(user_id, target_type)
+        except Exception:
+            pass
+        for txt in [raw, canonical]:
+            if not txt:
+                continue
+            try:
+                memory_manager.remove_preference(user_id, txt)
+            except Exception:
+                pass
+
+        if deleted:
+            label = target_type.replace("_", " ")
+            return {
+                "content": f"Done — I removed your saved {label} preference.",
+                "preferencesAction": {"action": "delete_type", "type": target_type},
+            }
+
+        return {
+            "content": "I couldn't remove that preference (it may have already been deleted).",
+            "preferencesAction": {"action": "delete_type", "type": target_type, "not_found": True},
+        }
+
+    return None
+
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, current_user: dict = Depends(get_current_user)):
     try:
@@ -374,7 +666,71 @@ async def chat(request: ChatRequest, current_user: dict = Depends(get_current_us
 
         # Load user memories before processing (this will be included in system prompt)
         # The agent's get_system_prompt_with_memory already handles this
-        
+
+        # Natural-language: query current preferences (must match Active Preferences UI)
+        pref_query = _handle_preference_query_command(user_id, request.message)
+        if pref_query:
+            response_message = ChatMessageModel(
+                id=str(uuid.uuid4()),
+                role="assistant",
+                content=pref_query["content"],
+                timestamp=datetime.now().isoformat(),
+                flightResults=[],
+                memoryContext=None,
+                appliedPrefs=None,
+                travelHistory=None,
+            )
+
+            storage.add_message(conversation_id, {
+                "id": str(uuid.uuid4()),
+                "role": "user",
+                "content": request.message,
+                "timestamp": datetime.now().isoformat(),
+            })
+            storage.add_message(conversation_id, response_message.model_dump())
+
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "message": response_message.model_dump(),
+                    "conversationId": conversation_id,
+                    "extractedPreferences": [],
+                    "preferencesAction": pref_query.get("preferencesAction"),
+                },
+            )
+
+        # Natural-language preference management (delete/clear) without any UI buttons.
+        pref_cmd = _handle_preference_management_command(user_id, request.message)
+        if pref_cmd:
+            response_message = ChatMessageModel(
+                id=str(uuid.uuid4()),
+                role="assistant",
+                content=pref_cmd["content"],
+                timestamp=datetime.now().isoformat(),
+                flightResults=[],
+                memoryContext=None,
+                appliedPrefs=None,
+                travelHistory=None,
+            )
+
+            storage.add_message(conversation_id, {
+                "id": str(uuid.uuid4()),
+                "role": "user",
+                "content": request.message,
+                "timestamp": datetime.now().isoformat(),
+            })
+            storage.add_message(conversation_id, response_message.model_dump())
+
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "message": response_message.model_dump(),
+                    "conversationId": conversation_id,
+                    "extractedPreferences": [],
+                    "preferencesAction": pref_cmd.get("preferencesAction"),
+                },
+            )
+
         # Process message with agent
         result = process_message(
             user_message=request.message,
@@ -411,8 +767,8 @@ async def chat(request: ChatRequest, current_user: dict = Depends(get_current_us
             filtered_extracted.append(pref)
 
         extracted_preferences = filtered_extracted
-        
-        # Store extracted preferences in mem0 if any were found
+
+        # Store extracted preferences in mem0/DB if any were found
         from memory_manager import memory_manager
         if extracted_preferences:
             for pref in extracted_preferences:
@@ -443,7 +799,7 @@ async def chat(request: ChatRequest, current_user: dict = Depends(get_current_us
                         memory_manager.store_preference(user_id, "general", pref)
                     except Exception as e:
                         print(f"[PREFS] Warning: failed to store general preference to mem0: {e}")
-        
+
         response_message = ChatMessageModel(
             id=str(uuid.uuid4()),
             role="assistant",
@@ -469,8 +825,8 @@ async def chat(request: ChatRequest, current_user: dict = Depends(get_current_us
             content={
                 "message": response_message.model_dump(),
                 "conversationId": conversation_id,
-                "extractedPreferences": extracted_preferences
-            }
+                "extractedPreferences": extracted_preferences,
+            },
         )
 
     except HTTPException:

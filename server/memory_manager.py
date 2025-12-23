@@ -1023,6 +1023,72 @@ class TravelMemoryManager:
             import traceback
             traceback.print_exc()
             return {"error": str(e)}
+
+    def remove_preferences_by_type(self, user_id: str, preference_type: str) -> Dict:
+        """Remove all preference memories matching a structured type.
+
+        This is used by natural-language commands like "forget my cabin class preference".
+        Since mem0 doesn't support server-side deletion filters, we scan the user's
+        memories and delete matches by ID.
+        """
+        pref_type = (preference_type or "").strip().lower()
+        if not pref_type:
+            return {"error": "preference_type is required"}
+
+        memory = self._get_memory()
+        if not memory:
+            return {"error": "Memory system not available"}
+
+        # Map DB/memory types to canonical label prefixes.
+        canonical_prefixes: dict[str, tuple[str, ...]] = {
+            "cabin_class": ("cabin class:",),
+            "departure_time": ("departure time:",),
+            "trip_type": ("trip type:",),
+            "red_eye": ("red-eye:", "red eye:"),
+            "seat": ("seat:",),
+            "baggage": ("baggage:",),
+            "passenger": ("travel:",),
+            # flight_type canonicalizes to "Stops: ..." sometimes.
+            "flight_type": ("stops:",),
+            "airline": (),
+        }
+
+        try:
+            all_memories = self.get_user_memories(user_id, limit=200)
+            deleted_ids: list[str] = []
+            for mem in all_memories or []:
+                if not (mem and isinstance(mem, dict)):
+                    continue
+
+                memory_id = mem.get("id")
+                memory_text = (mem.get("memory") or "").strip()
+                if not memory_id or not memory_text:
+                    continue
+
+                lower = memory_text.lower()
+
+                # Strong match: our structured wrapper includes "(Type: <type>)".
+                if f"type: {pref_type}" in lower:
+                    res = self.delete_memory(user_id, memory_id)
+                    if isinstance(res, dict) and res.get("success"):
+                        deleted_ids.append(memory_id)
+                    continue
+
+                # Fallback: canonicalize and match prefix.
+                core = self._strip_preference_wrappers(memory_text)
+                canonical = self._canonicalize_preference_text(core).strip().lower()
+                prefixes = canonical_prefixes.get(pref_type, ())
+                if prefixes and any(canonical.startswith(p) for p in prefixes):
+                    res = self.delete_memory(user_id, memory_id)
+                    if isinstance(res, dict) and res.get("success"):
+                        deleted_ids.append(memory_id)
+
+            return {"success": True, "type": pref_type, "deleted": len(deleted_ids), "deleted_ids": deleted_ids}
+        except Exception as e:
+            print(f"[MEMORY ERROR] Error removing preference type '{pref_type}' for user {user_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"error": str(e)}
     
     def get_full_user_profile(self, user_id: str) -> Dict:
         """

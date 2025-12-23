@@ -154,19 +154,6 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
     }
   }, [refreshBookings, onRefreshBookings]);
 
-  // Notify parent when preferences change
-  useEffect(() => {
-    if (onPreferencesChange) {
-      onPreferencesChange({
-        directFlightsOnly,
-        avoidRedEye,
-        cabinClass,
-        preferredTime,
-        tripType,
-      });
-    }
-  }, [directFlightsOnly, avoidRedEye, cabinClass, preferredTime, tripType, onPreferencesChange]);
-
   const handleRefreshPreferences = () => {
     setRefreshTrigger(prev => prev + 1);
     refreshPreferences();
@@ -177,13 +164,17 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
     try {
       // Delete old preferences in parallel
       const oldPrefsToDelete = [
+        "Direct flights only",
+        "Avoid red-eye flights",
         "Morning departures",
         "Afternoon departures",
         "Evening departures",
         "I prefer Business class flights",
         "I prefer Premium Economy class flights",
         "I prefer First Class class flights",
-        "I prefer Economy class flights"
+        "I prefer Economy class flights",
+        "I prefer One Way trips",
+        "I prefer Round Trip trips",
       ];
 
       await Promise.all(
@@ -290,6 +281,18 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
       // Save all preferences in parallel
       await Promise.all(prefsToSave);
 
+      // Only after a successful save do we treat these as "active" for chat.
+      // This prevents users from applying unsaved preferences.
+      if (onPreferencesChange) {
+        onPreferencesChange({
+          directFlightsOnly,
+          avoidRedEye,
+          cabinClass,
+          preferredTime,
+          tripType,
+        });
+      }
+
       // Refresh preferences
       setRefreshTrigger(prev => prev + 1);
       refreshPreferences();
@@ -302,72 +305,10 @@ export function ChatHeader({ onPreferencesRefresh, externalRefreshTrigger = 0, o
 
   const handleDirectFlightsToggle = async (checked: boolean) => {
     setDirectFlightsOnly(checked);
-    if (!token) return;
-
-    try {
-      if (checked) {
-        await fetch("/api/memory/add-preference", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            category: "preference",
-            type: "flight_type",
-            content: "Direct flights only",
-          }),
-        });
-      } else {
-        await fetch(`/api/memory/preferences/${encodeURIComponent("Direct flights only")}`, {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        });
-      }
-    } catch (e) {
-      console.error("Error updating direct flights preference:", e);
-    } finally {
-      setRefreshTrigger((prev) => prev + 1);
-      refreshPreferences();
-    }
   };
 
   const handleAvoidRedEyeToggle = async (checked: boolean) => {
     setAvoidRedEye(checked);
-    if (!token) return;
-
-    try {
-      if (checked) {
-        await fetch("/api/memory/add-preference", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            category: "preference",
-            type: "red_eye",
-            content: "Avoid red-eye flights",
-          }),
-        });
-      } else {
-        await fetch(`/api/memory/preferences/${encodeURIComponent("Avoid red-eye flights")}`, {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        });
-      }
-    } catch (e) {
-      console.error("Error updating red-eye preference:", e);
-    } finally {
-      setRefreshTrigger((prev) => prev + 1);
-      refreshPreferences();
-    }
   };
 
   const handlePreferredTimeChange = (value: string) => {
